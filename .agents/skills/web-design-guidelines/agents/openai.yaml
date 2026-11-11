@@ -1,0 +1,4 @@
+interface:
+  display_name: "Web 设计规范审查"
+  short_description: "审查可访问性、触控、字体、响应式、安全区与内容适配"
+  default_prompt: "Use $web-design-guidelines to review and improve this driver-app interface."

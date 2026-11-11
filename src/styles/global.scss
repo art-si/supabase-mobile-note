@@ -1,0 +1,207 @@
+@use '@wot-ui/ui/styles/theme/index.scss' as *;
+@use './presets.scss';
+@use './font.scss';
+@use './tokens.scss' as tokens;
+
+@font-face {
+  font-family: 'Note Icons';
+  src: url('~@/static/icons/note-icons.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+}
+
+:root,
+page,
+.wd-root-portal {
+  --note-font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Note Sans SC', 'Segoe UI', Roboto, 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --wot-typography-title-font-family: var(--note-font-family);
+  --wot-typography-body-font-family: var(--note-font-family);
+  --wot-typography-label-font-family: var(--note-font-family);
+  --wot-font-weight-medium: 500;
+  --wot-font-weight-semibold: 600;
+  --note-font-min: max(22rpx, 11px);
+  --note-font-caption: max(24rpx, 12px);
+  --note-font-footnote: max(26rpx, 13px);
+  --note-font-subhead: max(30rpx, 15px);
+  --note-font-body: max(34rpx, 17px);
+  --note-font-title3: max(40rpx, 20px);
+  --note-font-title2: max(44rpx, 22px);
+  --note-font-title1: max(56rpx, 28px);
+  --note-font-large: max(68rpx, 34px);
+  --note-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --note-duration-fast: 120ms;
+  --note-duration: 220ms;
+  --note-radius-sm: 12rpx;
+  --note-radius-md: 20rpx;
+  --note-radius-lg: 28rpx;
+  --note-radius-xl: 40rpx;
+  --note-control-height: max(88rpx, 44px);
+  --note-tabbar-height: calc(112rpx + env(safe-area-inset-bottom));
+}
+
+.page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  color: var(--note-text);
+  background: var(--note-bg);
+}
+
+.safe-bottom {
+  padding-bottom: calc(24rpx + env(safe-area-inset-bottom));
+}
+
+.note-card {
+  background: var(--note-surface);
+  border-radius: var(--note-radius-lg);
+  box-shadow: var(--note-shadow-sm);
+}
+
+/* 原生按钮统一控件。所有可点区域不小于 44pt。 */
+.note-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+  height: var(--note-control-height);
+  min-height: var(--note-control-height);
+  margin: 0;
+  padding: 0 36rpx;
+  border: 0;
+  border-radius: var(--note-radius-md);
+  font-size: var(--note-font-body);
+  font-weight: 600;
+  line-height: 1;
+  touch-action: manipulation;
+  transition:
+    transform var(--note-duration-fast) var(--note-ease),
+    opacity var(--note-duration) var(--note-ease),
+    background-color var(--note-duration) var(--note-ease);
+}
+
+.note-btn::after {
+  border: 0;
+}
+
+.note-btn:active:not(.is-disabled) {
+  transform: scale(0.98);
+}
+
+.note-btn.is-disabled {
+  opacity: 0.4;
+}
+
+.note-btn--primary {
+  color: var(--note-accent-contrast);
+  background: var(--note-accent);
+  box-shadow: var(--note-shadow-accent);
+}
+
+.note-btn--secondary {
+  color: var(--note-accent);
+  background: var(--note-accent-soft);
+}
+
+.note-btn--danger {
+  color: var(--note-danger);
+  background: var(--note-danger-soft);
+}
+
+.note-btn--plain {
+  color: var(--note-accent);
+  background: transparent;
+  box-shadow: none;
+}
+
+.note-btn:focus-visible {
+  outline: 4rpx solid rgba(var(--note-accent-rgb), 0.4);
+  outline-offset: 4rpx;
+}
+
+/* 原生输入控件容器。 */
+.note-field {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  height: var(--note-control-height);
+  min-height: var(--note-control-height);
+  padding: 0 24rpx;
+  border-radius: var(--note-radius-md);
+  background: var(--note-fill);
+  transition: box-shadow var(--note-duration) var(--note-ease);
+}
+
+.note-field:focus-within {
+  box-shadow: 0 0 0 4rpx rgba(var(--note-accent-rgb), 0.25);
+}
+
+.note-field__icon {
+  flex: none;
+  color: var(--note-text-2);
+}
+
+.note-field__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  color: var(--note-text);
+  font-size: var(--note-font-body);
+  background: transparent;
+}
+
+.note-field__placeholder {
+  color: var(--note-text-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* #ifdef H5 */
+@media (prefers-color-scheme: dark) {
+  :root,
+  page,
+  .wd-root-portal {
+    @include tokens.dark;
+  }
+}
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--note-accent-rgb), 0.35) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: rgba(var(--note-accent-rgb), 0.35);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--note-accent-rgb), 0.55);
+}
+
+uni-scroll-view .uni-scroll-view {
+  scrollbar-width: none;
+}
+
+uni-scroll-view .uni-scroll-view::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+/* #endif */

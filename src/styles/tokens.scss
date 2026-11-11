@@ -1,0 +1,68 @@
+// Apple HIG semantic tokens. Light values on systemGroupedBackground, dark on pure black.
+@mixin light {
+  --note-bg: #f2f2f7;
+  --note-surface: #ffffff;
+  --note-surface-2: #f2f2f7;
+  --note-fill: rgba(120, 120, 128, 0.12);
+  --note-fill-2: rgba(120, 120, 128, 0.08);
+  --note-text: #000000;
+  --note-text-2: rgba(60, 60, 67, 0.6);
+  --note-text-3: rgba(60, 60, 67, 0.3);
+  --note-separator: rgba(60, 60, 67, 0.16);
+  --note-separator-strong: rgba(60, 60, 67, 0.29);
+  --note-material: rgba(249, 249, 249, 0.82);
+  --note-material-thick: rgba(255, 255, 255, 0.94);
+  --note-danger: #ff3b30;
+  --note-danger-soft: rgba(255, 59, 48, 0.12);
+  --note-success: #34c759;
+  --note-warning: #ff9500;
+  --note-mood-calm: #30b0c7;
+  --note-mood-happy: #ff9500;
+  --note-mood-focused: #007aff;
+  --note-mood-tired: #8e8e93;
+  --note-mood-inspired: #af52de;
+  --note-mood-memorial: #ff2d55;
+  --note-mood-calm-soft: rgba(48, 176, 199, 0.12);
+  --note-mood-happy-soft: rgba(255, 149, 0, 0.12);
+  --note-mood-focused-soft: rgba(0, 122, 255, 0.12);
+  --note-mood-tired-soft: rgba(142, 142, 147, 0.14);
+  --note-mood-inspired-soft: rgba(175, 82, 222, 0.12);
+  --note-mood-memorial-soft: rgba(255, 45, 85, 0.12);
+  --note-shadow-sm: 0 2rpx 12rpx rgba(0, 0, 0, 0.04);
+  --note-shadow-md: 0 8rpx 24rpx rgba(0, 0, 0, 0.08);
+  --note-shadow-floating: 0 12rpx 32rpx rgba(0, 0, 0, 0.16);
+}
+
+@mixin dark {
+  --note-bg: #000000;
+  --note-surface: #1c1c1e;
+  --note-surface-2: #2c2c2e;
+  --note-fill: rgba(120, 120, 128, 0.24);
+  --note-fill-2: rgba(120, 120, 128, 0.18);
+  --note-text: #ffffff;
+  --note-text-2: rgba(235, 235, 245, 0.6);
+  --note-text-3: rgba(235, 235, 245, 0.3);
+  --note-separator: rgba(84, 84, 88, 0.4);
+  --note-separator-strong: rgba(84, 84, 88, 0.65);
+  --note-material: rgba(28, 28, 30, 0.82);
+  --note-material-thick: rgba(28, 28, 30, 0.94);
+  --note-danger: #ff453a;
+  --note-danger-soft: rgba(255, 69, 58, 0.18);
+  --note-success: #30d158;
+  --note-warning: #ff9f0a;
+  --note-mood-calm: #40c8e0;
+  --note-mood-happy: #ff9f0a;
+  --note-mood-focused: #0a84ff;
+  --note-mood-tired: #98989d;
+  --note-mood-inspired: #bf5af2;
+  --note-mood-memorial: #ff375f;
+  --note-mood-calm-soft: rgba(64, 200, 224, 0.22);
+  --note-mood-happy-soft: rgba(255, 159, 10, 0.22);
+  --note-mood-focused-soft: rgba(10, 132, 255, 0.22);
+  --note-mood-tired-soft: rgba(152, 152, 157, 0.24);
+  --note-mood-inspired-soft: rgba(191, 90, 242, 0.22);
+  --note-mood-memorial-soft: rgba(255, 55, 95, 0.22);
+  --note-shadow-sm: 0 2rpx 12rpx rgba(0, 0, 0, 0.3);
+  --note-shadow-md: 0 8rpx 24rpx rgba(0, 0, 0, 0.4);
+  --note-shadow-floating: 0 12rpx 32rpx rgba(0, 0, 0, 0.55);
+}

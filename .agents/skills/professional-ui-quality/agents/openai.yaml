@@ -1,0 +1,4 @@
+interface:
+  display_name: "专业移动端 UI 质量"
+  short_description: "统一司机端视觉层级、交互状态、响应式与验收标准"
+  default_prompt: "Use $professional-ui-quality to design and verify this driver-app UI to a production standard."

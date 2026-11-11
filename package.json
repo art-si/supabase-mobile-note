@@ -1,0 +1,44 @@
+{
+  "name": "note-timeline-uni",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:h5": "uni -p h5",
+    "dev:mp-weixin": "uni -p mp-weixin",
+    "build:h5": "uni build -p h5 --outDir docs",
+    "build:mp-weixin": "uni build -p mp-weixin",
+    "typecheck": "vue-tsc --noEmit --pretty false",
+    "icons:build": "node scripts/build-icons.mjs",
+    "font:css": "node scripts/build-ui-font-css.mjs"
+  },
+  "dependencies": {
+    "@dcloudio/uni-app": "3.0.0-alpha-1000920260626810",
+    "@dcloudio/uni-cloud": "3.0.0-alpha-1000920260626810",
+    "@dcloudio/uni-components": "3.0.0-alpha-1000920260626810",
+    "@dcloudio/uni-console": "3.0.0-alpha-1000920260626810",
+    "@dcloudio/uni-h5": "3.0.0-alpha-1000920260626810",
+    "@dcloudio/uni-i18n": "3.0.0-alpha-1000920260626810",
+    "@dcloudio/uni-mp-weixin": "3.0.0-alpha-1000920260626810",
+    "@dcloudio/uni-push": "3.0.0-alpha-1000920260626810",
+    "@dcloudio/uni-shared": "3.0.0-alpha-1000920260626810",
+    "@dcloudio/uni-stat": "3.0.0-alpha-1000920260626810",
+    "@wot-ui/ui": "2.3.2",
+    "pinia": "3.0.4",
+    "vue": "3.4.21"
+  },
+  "devDependencies": {
+    "@dcloudio/types": "3.4.31",
+    "@dcloudio/uni-cli-shared": "3.0.0-alpha-1000920260626810",
+    "@dcloudio/vite-plugin-uni": "3.0.0-alpha-1000920260626810",
+    "@vue/compiler-sfc": "3.4.21",
+    "@vue/tsconfig": "0.8.1",
+    "bootstrap-icons": "1.13.1",
+    "playwright": "^1.63.0",
+    "sass": "1.101.0",
+    "subset-font": "2.9.0",
+    "typescript": "6.0.3",
+    "vite": "8.1.0",
+    "vue-tsc": "3.3.5"
+  }
+}
