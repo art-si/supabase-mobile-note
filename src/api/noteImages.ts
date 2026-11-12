@@ -1,4 +1,6 @@
 import { ApiRequestError, SUPABASE_KEY, SUPABASE_URL, removeStorageObjects, request } from './supabase'
+import { removeLocalNoteImages, saveLocalNoteImage } from './localNoteImages'
+import { isLocalStorageMode } from '@/utils/storageMode'
 
 export const NOTE_IMAGE_BUCKET = 'note-images'
 export const MAX_NOTE_IMAGES = 9
@@ -10,7 +12,7 @@ export interface ChosenImage {
   size: number
 }
 
-type ImageSource = 'album' | 'camera'
+export type ImageSource = 'album' | 'camera'
 type WechatChooseMediaResult = { tempFiles: Array<{ tempFilePath: string; size?: number }> }
 type WechatApiError = { errMsg?: string }
 
@@ -26,26 +28,7 @@ declare const wx: {
 }
 
 // 与 driver 端一致的选图链路：微信用 chooseMedia，其余平台用 chooseImage，取消视为空选择。
-export async function chooseNoteImages(count: number): Promise<ChosenImage[]> {
-  const source = await new Promise<ImageSource | null>((resolve, reject) => {
-    uni.showActionSheet({
-      title: '选择图片来源',
-      itemList: ['拍照', '从手机相册选择'],
-      success(result) {
-        resolve(result.tapIndex === 0 ? 'camera' : 'album')
-      },
-      fail(error) {
-        if (error.errMsg?.includes('cancel')) {
-          resolve(null)
-          return
-        }
-        reject(new Error(error.errMsg || '请选择图片来源'))
-      }
-    })
-  })
-
-  if (!source) return []
-
+export function chooseNoteImages(count: number, source: ImageSource): Promise<ChosenImage[]> {
   return new Promise<ChosenImage[]>((resolve, reject) => {
     // #ifdef MP-WEIXIN
     wx.chooseMedia({
@@ -104,6 +87,11 @@ export function uploadNoteImage(
   filePath: string,
   onProgress?: (percent: number) => void
 ): Promise<string> {
+  if (isLocalStorageMode()) {
+    onProgress?.(100)
+    return saveLocalNoteImage(filePath)
+  }
+
   const objectPath = `${userId}/${uniqueObjectName(filePath)}`
   const url = `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${NOTE_IMAGE_BUCKET}/${objectPath}`
 
@@ -163,5 +151,9 @@ export async function signNoteImages(token: string, paths: string[]): Promise<Re
 }
 
 export async function removeNoteImages(token: string, paths: string[]) {
+  if (isLocalStorageMode()) {
+    await removeLocalNoteImages(paths)
+    return
+  }
   await removeStorageObjects(NOTE_IMAGE_BUCKET, paths, token)
 }

@@ -1,17 +1,18 @@
 // Apple HIG semantic tokens. Light values on systemGroupedBackground, dark on pure black.
 @mixin light {
-  --note-bg: #f2f2f7;
+  --note-bg: #f5f7fb;
   --note-surface: #ffffff;
-  --note-surface-2: #f2f2f7;
-  --note-fill: rgba(120, 120, 128, 0.12);
-  --note-fill-2: rgba(120, 120, 128, 0.08);
-  --note-text: #000000;
-  --note-text-2: rgba(60, 60, 67, 0.6);
-  --note-text-3: rgba(60, 60, 67, 0.3);
-  --note-separator: rgba(60, 60, 67, 0.16);
-  --note-separator-strong: rgba(60, 60, 67, 0.29);
-  --note-material: rgba(249, 249, 249, 0.82);
-  --note-material-thick: rgba(255, 255, 255, 0.94);
+  --note-surface-2: #eef2f8;
+  --note-fill: rgba(95, 110, 135, 0.1);
+  --note-fill-2: rgba(95, 110, 135, 0.06);
+  --note-text: #172033;
+  --note-text-2: #5c667a;
+  --note-text-3: #707b8e;
+  --note-separator: rgba(48, 62, 85, 0.12);
+  --note-separator-strong: rgba(48, 62, 85, 0.22);
+  --note-material: rgba(255, 255, 255, 0.72);
+  --note-material-thick: rgba(250, 251, 253, 0.88);
+  --note-scrim: rgba(16, 24, 40, 0.32);
   --note-danger: #ff3b30;
   --note-danger-soft: rgba(255, 59, 48, 0.12);
   --note-success: #34c759;
@@ -28,9 +29,9 @@
   --note-mood-tired-soft: rgba(142, 142, 147, 0.14);
   --note-mood-inspired-soft: rgba(175, 82, 222, 0.12);
   --note-mood-memorial-soft: rgba(255, 45, 85, 0.12);
-  --note-shadow-sm: 0 2rpx 12rpx rgba(0, 0, 0, 0.04);
-  --note-shadow-md: 0 8rpx 24rpx rgba(0, 0, 0, 0.08);
-  --note-shadow-floating: 0 12rpx 32rpx rgba(0, 0, 0, 0.16);
+  --note-shadow-sm: 0 4rpx 18rpx rgba(26, 46, 80, 0.045);
+  --note-shadow-md: 0 12rpx 36rpx rgba(26, 46, 80, 0.09);
+  --note-shadow-floating: 0 20rpx 56rpx rgba(26, 46, 80, 0.17);
 }
 
 @mixin dark {
@@ -41,11 +42,12 @@
   --note-fill-2: rgba(120, 120, 128, 0.18);
   --note-text: #ffffff;
   --note-text-2: rgba(235, 235, 245, 0.6);
-  --note-text-3: rgba(235, 235, 245, 0.3);
+  --note-text-3: rgba(235, 235, 245, 0.48);
   --note-separator: rgba(84, 84, 88, 0.4);
   --note-separator-strong: rgba(84, 84, 88, 0.65);
-  --note-material: rgba(28, 28, 30, 0.82);
-  --note-material-thick: rgba(28, 28, 30, 0.94);
+  --note-material: rgba(28, 28, 30, 0.72);
+  --note-material-thick: rgba(28, 28, 30, 0.88);
+  --note-scrim: rgba(0, 0, 0, 0.5);
   --note-danger: #ff453a;
   --note-danger-soft: rgba(255, 69, 58, 0.18);
   --note-success: #30d158;

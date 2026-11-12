@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev:h5": "uni -p h5",
+    "dev:h5": "uni -p h5 --host 0.0.0.0",
+    "dev:h5:lan": "uni -p h5 --host 0.0.0.0",
     "dev:mp-weixin": "uni -p mp-weixin",
     "build:h5": "uni build -p h5 --outDir docs",
     "build:mp-weixin": "uni build -p mp-weixin",
@@ -13,6 +14,9 @@
     "font:css": "node scripts/build-ui-font-css.mjs"
   },
   "dependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/core": "^8.6.0",
     "@dcloudio/uni-app": "3.0.0-alpha-1000920260626810",
     "@dcloudio/uni-cloud": "3.0.0-alpha-1000920260626810",
     "@dcloudio/uni-components": "3.0.0-alpha-1000920260626810",
@@ -28,6 +32,7 @@
     "vue": "3.4.21"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.6.0",
     "@dcloudio/types": "3.4.31",
     "@dcloudio/uni-cli-shared": "3.0.0-alpha-1000920260626810",
     "@dcloudio/vite-plugin-uni": "3.0.0-alpha-1000920260626810",

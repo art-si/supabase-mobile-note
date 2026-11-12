@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { accountPasswordLogin, refreshToken, signOut, wechatPhoneLogin } from '@/api/supabase'
 import type { Session } from '@/api/types'
+import { isLocalStorageMode } from '@/utils/storageMode'
 
 const STORAGE_KEY = 'note-session'
 const LOGIN_URL = '/pages/login/index'
@@ -74,6 +75,7 @@ export const useAuthStore = defineStore('auth', {
       if (redirect) redirectToLogin()
     },
     async ensureValidSession(redirect = true) {
+      if (isLocalStorageMode()) return true
       this.hydrate()
       if (!this.token) {
         this.clearSession(redirect)

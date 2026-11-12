@@ -15,6 +15,7 @@ interface RequestOptions {
   token?: string
   headers?: Record<string, string>
   raw?: boolean
+  timeoutMs?: number
 }
 
 interface ApiErrorDetails {
@@ -149,7 +150,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       url,
       method: uniMethod,
       header: headers,
-      timeout: 30000,
+      timeout: options.timeoutMs ?? 30000,
       data: options.body as UniApp.RequestOptions['data'],
       success(response) {
         const statusCode = response.statusCode || 0

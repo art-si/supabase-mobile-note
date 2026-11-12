@@ -24,6 +24,7 @@ export interface Note {
   contentText?: string
   mood: NoteMood
   images: string[]
+  tags: string[]
   createdAt: string
   updatedAt: string
 }
@@ -32,4 +33,5 @@ export interface NoteDraft {
   content: string
   mood: NoteMood
   images: string[]
+  tags: string[]
 }

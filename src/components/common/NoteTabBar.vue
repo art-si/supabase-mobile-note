@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import NoteIcon from './NoteIcon.vue'
 import type { NoteIconName } from './icon-glyphs'
+import { haptic } from '@/utils/haptic'
 
 type TabKey = 'timeline' | 'mine'
 
@@ -14,23 +15,43 @@ const items: Array<{ key: TabKey; label: string; icon: NoteIconName; url: string
 function go(key: TabKey) {
   if (key === props.active) return
   const item = items.find((entry) => entry.key === key)
-  if (item) uni.reLaunch({ url: item.url })
+  if (!item) return
+  haptic('light')
+  uni.reLaunch({ url: item.url })
+}
+
+function compose() {
+  haptic('light')
+  uni.navigateTo({ url: '/pages/editor/index' })
 }
 </script>
 
 <template>
-  <view class="note-tabbar" role="navigation" aria-label="主导航">
+  <view class="note-tabbar note-material--thick" role="navigation" aria-label="主导航">
     <button
-      v-for="item in items"
-      :key="item.key"
       class="note-tabbar__item"
-      :class="{ 'note-tabbar__item--active': item.key === active }"
-      :aria-current="item.key === active ? 'page' : undefined"
-      :aria-label="item.label"
-      @tap="go(item.key)"
+      :class="{ 'note-tabbar__item--active': active === 'timeline' }"
+      :aria-current="active === 'timeline' ? 'page' : undefined"
+      :aria-label="items[0]!.label"
+      @tap="go('timeline')"
     >
-      <NoteIcon :name="item.icon" size="44rpx" />
-      <text class="note-tabbar__label">{{ item.label }}</text>
+      <NoteIcon :name="items[0]!.icon" size="44rpx" />
+      <text class="note-tabbar__label">{{ items[0]!.label }}</text>
+    </button>
+
+    <button class="note-tabbar__compose" aria-label="写一条新笔记" @tap="compose">
+      <NoteIcon name="add" size="44rpx" />
+    </button>
+
+    <button
+      class="note-tabbar__item"
+      :class="{ 'note-tabbar__item--active': active === 'mine' }"
+      :aria-current="active === 'mine' ? 'page' : undefined"
+      :aria-label="items[1]!.label"
+      @tap="go('mine')"
+    >
+      <NoteIcon :name="items[1]!.icon" size="44rpx" />
+      <text class="note-tabbar__label">{{ items[1]!.label }}</text>
     </button>
   </view>
 </template>
@@ -42,38 +63,73 @@ function go(key: TabKey) {
   right: 0;
   bottom: 0;
   z-index: 30;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
   height: var(--note-tabbar-height);
-  padding-bottom: env(safe-area-inset-bottom);
-  background: var(--note-material);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  padding: 0 24rpx env(safe-area-inset-bottom);
   border-top: 1rpx solid var(--note-separator);
+  box-shadow: 0 -8rpx 32rpx rgba(30, 52, 80, 0.05);
 }
 
 .note-tabbar__item {
-  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 4rpx;
+  height: 96rpx;
   min-height: 44px;
   margin: 0;
-  padding: 8rpx 0 0;
+  padding: 0;
   border: 0;
+  border-radius: var(--note-radius-md);
   background: transparent;
   color: var(--note-text-2);
-  transition: color var(--note-duration-fast) var(--note-ease);
+  transition:
+    color var(--note-duration-fast) var(--note-ease),
+    transform var(--note-duration-fast) var(--note-ease);
+}
+
+.note-tabbar__item:active {
+  transform: scale(0.94);
 }
 
 .note-tabbar__item--active {
   color: var(--note-accent);
 }
 
+.note-tabbar__item::after,
+.note-tabbar__compose::after {
+  border: 0;
+}
+
 .note-tabbar__label {
   font-size: var(--note-font-min);
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.2;
+  letter-spacing: var(--note-track-caption);
+}
+
+.note-tabbar__compose {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 104rpx;
+  height: 104rpx;
+  min-width: 52px;
+  min-height: 52px;
+  margin: 0 24rpx;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--note-accent-contrast);
+  background: linear-gradient(145deg, var(--note-accent) 0%, var(--note-accent-strong) 100%);
+  box-shadow: var(--note-shadow-accent);
+  transition: transform var(--note-duration-fast) var(--note-ease);
+}
+
+.note-tabbar__compose:active {
+  transform: scale(0.9);
 }
 </style>

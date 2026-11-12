@@ -31,6 +31,7 @@ function onPick(emoji: string) {
             v-if="recent.length"
             class="emoji-tab"
             :class="{ 'emoji-tab--active': active === 'recent' }"
+            :aria-pressed="active === 'recent'"
             @mousedown.prevent
             @tap="active = 'recent'"
           >
@@ -41,6 +42,7 @@ function onPick(emoji: string) {
             :key="category.id"
             class="emoji-tab"
             :class="{ 'emoji-tab--active': active === category.id }"
+            :aria-pressed="active === category.id"
             @mousedown.prevent
             @tap="active = category.id"
           >
@@ -71,7 +73,9 @@ function onPick(emoji: string) {
 
 <style scoped lang="scss">
 .emoji-panel {
+  max-height: min(620rpx, 54dvh);
   overflow: hidden;
+  overscroll-behavior: contain;
   border-radius: var(--note-radius-lg) var(--note-radius-lg) 0 0;
   background: var(--note-surface);
   box-shadow: var(--note-shadow-floating);
@@ -81,7 +85,7 @@ function onPick(emoji: string) {
   display: flex;
   align-items: center;
   gap: 8rpx;
-  padding: 12rpx 12rpx 8rpx 16rpx;
+  padding: 16rpx 12rpx 12rpx 16rpx;
   border-bottom: 1rpx solid var(--note-separator);
 }
 
@@ -97,7 +101,7 @@ function onPick(emoji: string) {
 }
 
 .emoji-tab {
-  height: 60rpx;
+  height: 68rpx;
   min-height: 44px;
   margin: 0;
   padding: 0 24rpx;
@@ -131,7 +135,8 @@ function onPick(emoji: string) {
 }
 
 .emoji-panel__body {
-  height: 480rpx;
+  height: min(480rpx, 42dvh);
+  min-height: 220rpx;
 }
 
 .emoji-panel__grid {
@@ -144,7 +149,7 @@ function onPick(emoji: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 88rpx;
+  height: 92rpx;
   min-height: 44px;
   margin: 0;
   padding: 0;
@@ -158,7 +163,13 @@ function onPick(emoji: string) {
 }
 
 .emoji-cell__glyph {
-  font-size: 52rpx;
+  font-size: 48rpx;
   line-height: 1;
+}
+
+.emoji-tab::after,
+.emoji-panel__close::after,
+.emoji-cell::after {
+  border: 0;
 }
 </style>

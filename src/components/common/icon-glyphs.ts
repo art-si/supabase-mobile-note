@@ -6,6 +6,7 @@ export const iconGlyphs = {
   'close': '\uf659',
   'add': '\uf64d',
   'check': '\uf633',
+  'cloud': '\uf2c1',
   'search': '\uf52a',
   'more': '\uf5d4',
   'edit': '\uf4cb',
@@ -35,12 +36,15 @@ export const iconGlyphs = {
   'wechat': '\uf829',
   'send': '\uf6c0',
   'image': '\uf42a',
+  'camera': '\uf220',
   'emoji': '\uf327',
   'bold': '\uf5f0',
   'italic': '\uf5f4',
   'list': '\uf478',
   'quote': '\uf6b0',
   'keyboard': '\uf451',
+  'tag': '\uf5af',
+  'mic': '\uf490',
 } as const
 
 export type NoteIconName = keyof typeof iconGlyphs

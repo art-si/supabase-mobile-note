@@ -24,6 +24,9 @@ const noJekyllPlugin = () => ({
 export default defineConfig({
   // 使用相对资源路径，兼容 https://<user>.github.io/<repository>/ 形式的 GitHub Pages。
   base: process.env.UNI_PLATFORM === 'h5' ? './' : '/',
+  server: {
+    watch: { ignored: ['**/.artifacts/**', '**/artifacts/**', '**/android/**'] }
+  },
   css: {
     preprocessorOptions: {
       scss: {

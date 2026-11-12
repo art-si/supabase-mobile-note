@@ -29,15 +29,44 @@ page,
   --note-font-title2: max(44rpx, 22px);
   --note-font-title1: max(56rpx, 28px);
   --note-font-large: max(68rpx, 34px);
+  --note-track-large: -0.02em;
+  --note-track-title: -0.01em;
+  --note-track-caption: 0.01em;
+  --note-space-xs: 8rpx;
+  --note-space-sm: 16rpx;
+  --note-space-md: 24rpx;
+  --note-space-lg: 32rpx;
+  --note-space-xl: 48rpx;
+  --note-space-2xl: 64rpx;
   --note-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --note-ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --note-ease-exit: cubic-bezier(0.4, 0, 1, 1);
   --note-duration-fast: 120ms;
   --note-duration: 220ms;
+  --note-duration-slow: 380ms;
+  --note-duration-sheet: 420ms;
+  --note-blur: 20px;
+  --note-blur-thick: 30px;
   --note-radius-sm: 12rpx;
   --note-radius-md: 20rpx;
   --note-radius-lg: 28rpx;
   --note-radius-xl: 40rpx;
   --note-control-height: max(88rpx, 44px);
+  --note-nav-height: calc(88rpx + env(safe-area-inset-top));
   --note-tabbar-height: calc(112rpx + env(safe-area-inset-bottom));
+}
+
+/* 浮层 chrome 统一材质：内容在其下方滚动，而不是被不透明条切掉。 */
+.note-material {
+  background: var(--note-material);
+  backdrop-filter: blur(var(--note-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--note-blur)) saturate(180%);
+}
+
+.note-material--thick {
+  background: var(--note-material-thick);
+  backdrop-filter: blur(var(--note-blur-thick)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--note-blur-thick)) saturate(180%);
 }
 
 .page {
@@ -53,8 +82,35 @@ page,
 
 .note-card {
   background: var(--note-surface);
+  border: 1rpx solid var(--note-separator);
   border-radius: var(--note-radius-lg);
   box-shadow: var(--note-shadow-sm);
+}
+
+.note-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6rpx;
+  height: 44rpx;
+  padding: 0 16rpx;
+  border-radius: 999rpx;
+  background: var(--note-fill);
+  color: var(--note-text-2);
+  font-size: var(--note-font-caption);
+  font-weight: 600;
+  letter-spacing: var(--note-track-caption);
+}
+
+button,
+wd-button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(var(--note-accent-rgb), 0.48);
+  outline-offset: 3px;
 }
 
 /* 原生按钮统一控件。所有可点区域不小于 44pt。 */
@@ -170,6 +226,13 @@ page,
   page,
   .wd-root-portal {
     @include tokens.dark;
+  }
+
+  /* 手动选择浅色时，系统深色不能渗透进来。 */
+  html.note-appearance-light,
+  html.note-appearance-light page,
+  html.note-appearance-light .wd-root-portal {
+    @include tokens.light;
   }
 }
 

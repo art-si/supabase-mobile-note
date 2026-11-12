@@ -4,11 +4,12 @@ Apple Design 风格的时间轴记事本。骨架来自 `supabase-mobile-tms-dri
 
 ## 功能
 
-- 邮箱 / 手机号 + 密码登录（复用 TMS 已部署的 `driver-auth` Edge Function，账号体系与司机端一致）
-- 时间轴首页：按日分组、心情标记、搜索、下拉刷新、分页加载；点顶部日期打开日历，按日筛选记录
+- 双存储模式：新安装默认本机存储，笔记仅保存在当前设备且无需登录；管理端参数设置可开放 Supabase 云端选项，之后每台设备由使用者自行选择，云端模式使用邮箱 / 手机号登录并沿用 TMS 已部署的 `driver-auth`
+- 启动时仅匿名读取公开存储能力配置；配置不可用时自动使用本机存储。选择本机后，笔记读写不访问远端接口
+- 时间轴首页：按日分组、搜索、下拉刷新、分页加载；点顶部日期打开日历，按日筛选记录
 - 富文本编辑：uni-app 原生 editor（Quill 本地内置，不依赖 CDN），加粗 / 斜体 / 列表 / 引用，企业级表情面板
-- 图片附件：拍照 / 相册选图，最多 9 张、单张 10MB，私有桶 `note-images` + 签名 URL，时间轴网格渲染与全屏预览
-- 笔记管理：新增 / 修改 / 删除，六种心情（平静 / 愉悦 / 专注 / 疲惫 / 灵感 / 纪念）
+- 图片附件：拍照 / 相册选图，最多 9 张、单张 10MB；本机模式保存到设备，云端模式使用私有桶 `note-images` 与签名 URL
+- 笔记管理：新增 / 修改 / 撤销删除，正文、标签与图片在移动端和云端管理页互通
 - 我的：账号信息、主题色（蓝 / 靛 / 青）、退出登录
 - 跟随系统深色模式，无应用内外观开关（HIG 要求）
 
@@ -36,6 +37,21 @@ pnpm build:mp-weixin  # 微信小程序（需先在 manifest.json 填 appid）
 pnpm icons:build      # 重新生成图标字体
 pnpm font:css         # 重新生成内嵌 UI 字体 CSS
 ```
+
+### Android 手机测试包
+
+测试包使用 Capacitor 加载打包进应用的 H5 页面，支持 Android 7.0 及以上；这是用于真机验证的调试包。手机应用与浏览器各自保存本机笔记，卸载应用或清除应用数据会删除应用内的本机笔记。
+
+安装 JDK 21、Android SDK 36 和 Build-Tools 35.0.0 后，设置 `ANDROID_HOME` 指向 SDK 目录，执行：
+
+```powershell
+pnpm build:h5
+pnpm exec cap sync android
+cd android
+.\gradlew.bat :app:assembleDebug
+```
+
+生成文件位于 `android/app/build/outputs/apk/debug/app-debug.apk`，使用 Android 调试证书签名。正式发布仍需配置自己的应用标识、签名及发布流程；语音输入取决于设备 WebView 的支持情况。
 
 ## 数据库
 

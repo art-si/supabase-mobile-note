@@ -8,10 +8,23 @@ export const THEME_PRESETS = [
 
 export type ThemePresetId = (typeof THEME_PRESETS)[number]['id']
 
+export const APPEARANCE_OPTIONS = [
+  { id: 'auto', name: '自动' },
+  { id: 'light', name: '浅色' },
+  { id: 'dark', name: '深色' }
+] as const
+
+export type AppearanceMode = (typeof APPEARANCE_OPTIONS)[number]['id']
+
 const STORAGE_KEY = 'note-theme'
+const APPEARANCE_KEY = 'note-appearance'
 
 function isThemePresetId(value: unknown): value is ThemePresetId {
   return THEME_PRESETS.some((preset) => preset.id === value)
+}
+
+function isAppearanceMode(value: unknown): value is AppearanceMode {
+  return APPEARANCE_OPTIONS.some((option) => option.id === value)
 }
 
 function savedPreset(): ThemePresetId {
@@ -23,8 +36,17 @@ function savedPreset(): ThemePresetId {
   }
 }
 
+function savedAppearance(): AppearanceMode {
+  try {
+    const value: unknown = uni.getStorageSync(APPEARANCE_KEY)
+    return isAppearanceMode(value) ? value : 'auto'
+  } catch {
+    return 'auto'
+  }
+}
+
 export const useThemeStore = defineStore('theme', {
-  state: () => ({ preset: savedPreset() }),
+  state: () => ({ preset: savedPreset(), appearance: savedAppearance() }),
   getters: {
     currentPreset: (state) => THEME_PRESETS.find((preset) => preset.id === state.preset) || THEME_PRESETS[0]
   },
@@ -34,6 +56,16 @@ export const useThemeStore = defineStore('theme', {
       this.preset = preset
       try {
         uni.setStorageSync(STORAGE_KEY, preset)
+        return true
+      } catch {
+        return false
+      }
+    },
+    selectAppearance(mode: AppearanceMode): boolean {
+      if (this.appearance === mode) return true
+      this.appearance = mode
+      try {
+        uni.setStorageSync(APPEARANCE_KEY, mode)
         return true
       } catch {
         return false

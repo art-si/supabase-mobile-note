@@ -1,13 +1,37 @@
 <script setup lang="ts">
+import { watch } from 'vue'
 import { onLaunch, onShow } from '@dcloudio/uni-app'
 import { useAuthStore } from '@/stores/auth'
+import { useStorageModeStore } from '@/stores/storageMode'
+import { useDarkMode } from '@/composables/useDarkMode'
+// #ifdef H5
+import { Capacitor } from '@capacitor/core'
+import { App as NativeApp } from '@capacitor/app'
+// #endif
 
 let startupPromise: Promise<void> | null = null
+
+const { isDark } = useDarkMode()
+
+// #ifdef H5
+// 手动外观与系统不一致时，页面外的 overscroll 区域也要跟着换色。
+watch(
+  isDark,
+  (dark) => {
+    const root = document.documentElement
+    root.classList.toggle('note-appearance-dark', dark)
+    root.classList.toggle('note-appearance-light', !dark)
+    root.style.colorScheme = dark ? 'dark' : 'light'
+  },
+  { immediate: true }
+)
+// #endif
 
 function ensureSession() {
   if (startupPromise) return startupPromise
 
   startupPromise = (async () => {
+    await useStorageModeStore().initialize()
     await useAuthStore().ensureValidSession()
   })()
     .catch((error) => {
@@ -21,6 +45,19 @@ function ensureSession() {
 }
 
 onLaunch(() => {
+  // #ifdef H5
+  if (Capacitor.getPlatform() === 'android') {
+    void NativeApp.addListener('backButton', () => {
+      if (document.querySelector('.note-sheet__scrim--on')) {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      } else if (getCurrentPages().length > 1) {
+        uni.navigateBack()
+      } else {
+        void NativeApp.minimizeApp()
+      }
+    })
+  }
+  // #endif
   void ensureSession()
 })
 
@@ -36,7 +73,6 @@ page {
   min-height: 100%;
   background: var(--note-bg);
   color: var(--note-text);
-  overflow-x: hidden;
   font-family: var(--note-font-family);
   font-weight: 400;
   font-synthesis: none;
@@ -46,13 +82,34 @@ page {
   text-rendering: optimizeLegibility;
 }
 
+/* #ifndef H5 */
+page {
+  overflow-x: hidden;
+}
+/* #endif */
+
 /* #ifdef H5 */
+/* H5 必须让 window 保持唯一滚动容器：overflow-x:hidden 会把 body 变成滚动盒，
+   连带失效 onPageScroll、onReachBottom、pageScrollTo 和 sticky 日期头。 */
 html,
 body {
   min-width: 320px;
   margin: 0;
-  overflow-x: hidden;
   background: var(--note-bg);
+}
+
+html.note-appearance-dark,
+html.note-appearance-dark body,
+html.note-appearance-dark page {
+  --note-bg: #000000;
+  background: #000000;
+}
+
+html.note-appearance-light,
+html.note-appearance-light body,
+html.note-appearance-light page {
+  --note-bg: #f5f7fb;
+  background: #f5f7fb;
 }
 
 @supports (font: -apple-system-body) {
@@ -68,9 +125,13 @@ body {
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .tl-header,
+  .note-material,
+  .note-material--thick,
+  .tl-nav,
+  .tl-day__head,
   .note-tabbar,
-  .tl-day__head {
+  .note-navbar,
+  .editor-toolbar {
     background: var(--note-surface) !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
@@ -79,7 +140,8 @@ body {
 
 @media (prefers-contrast: more) {
   .note-card,
-  .note-tabbar {
+  .note-tabbar,
+  .tl-card {
     border: 1rpx solid var(--note-separator-strong);
   }
 }
