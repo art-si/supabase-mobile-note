@@ -154,6 +154,7 @@ function onRemove() {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  if (event.target !== event.currentTarget) return
   if (event.key === 'Enter' || event.key === ' ') {
     event.preventDefault()
     onPress()
@@ -251,6 +252,7 @@ defineExpose({ close })
       role="button"
       tabindex="0"
       :aria-label="pressLabel || '打开这条笔记'"
+      :aria-expanded="isOpen"
       @mousedown="onMouseDown"
       @keydown="onKeydown"
       @touchstart="onTouchStart"
@@ -313,13 +315,16 @@ defineExpose({ close })
   position: relative;
   border-radius: var(--note-radius-md);
   touch-action: pan-y;
-  will-change: transform;
 }
 
 .swipe--dragging {
   cursor: grabbing;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.swipe--dragging .swipe__track {
+  will-change: transform;
 }
 
 @media (hover: hover) and (pointer: fine) {

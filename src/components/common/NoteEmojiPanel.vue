@@ -73,6 +73,8 @@ function onPick(emoji: string) {
 
 <style scoped lang="scss">
 .emoji-panel {
+  display: flex;
+  flex-direction: column;
   max-height: min(620rpx, 54dvh);
   overflow: hidden;
   overscroll-behavior: contain;
@@ -83,6 +85,7 @@ function onPick(emoji: string) {
 
 .emoji-panel__head {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 8rpx;
   padding: 16rpx 12rpx 12rpx 16rpx;
@@ -101,25 +104,40 @@ function onPick(emoji: string) {
 }
 
 .emoji-tab {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   height: 68rpx;
   min-height: 44px;
   margin: 0;
-  padding: 0 24rpx;
+  padding: 0 20rpx;
   border: 0;
   border-radius: 999rpx;
   background: transparent;
   color: var(--note-text-2);
   font-size: var(--note-font-footnote);
   font-weight: 600;
+  line-height: 1.2;
 }
 
 .emoji-tab--active {
   color: var(--note-accent);
+}
+
+.emoji-tab--active::before {
+  position: absolute;
+  z-index: -1;
+  inset: 5px 0;
+  border-radius: inherit;
   background: var(--note-accent-soft);
+  content: '';
 }
 
 .emoji-panel__close {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: center;
   width: 60rpx;
@@ -135,27 +153,30 @@ function onPick(emoji: string) {
 }
 
 .emoji-panel__body {
+  flex: 1;
   height: min(480rpx, 42dvh);
-  min-height: 220rpx;
+  min-height: 0;
+  overscroll-behavior: contain;
 }
 
 .emoji-panel__grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  padding: 12rpx 8rpx calc(12rpx + env(safe-area-inset-bottom));
+  padding: 12rpx 8rpx;
 }
 
 .emoji-cell {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 92rpx;
+  height: clamp(44px, 92rpx, 52px);
   min-height: 44px;
   margin: 0;
   padding: 0;
   border: 0;
   border-radius: var(--note-radius-sm);
   background: transparent;
+  transition: background-color var(--note-duration-fast) var(--note-ease);
 }
 
 .emoji-cell:active {

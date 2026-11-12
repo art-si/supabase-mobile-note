@@ -7,12 +7,22 @@ android {
         applicationId "com.shiguang.notes"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 101
+        versionName "1.0.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             // Vite can emit JS chunks whose filenames start with dots; keep them in the APK.
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        debug {
+            // Keep the existing test-app identity so updates preserve on-device notes.
+            // This local key is ignored by Git; retain it when moving the build machine.
+            storeFile file('shiguang-debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
         }
     }
     buildTypes {

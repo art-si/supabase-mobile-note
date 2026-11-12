@@ -132,14 +132,22 @@ export function buildQuery(params: Record<string, string | number | boolean | un
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  if (!SUPABASE_URL || !SUPABASE_KEY || SUPABASE_KEY === 'your-publishable-or-anon-key') {
+    throw new ApiRequestError({
+      code: 'SERVICE_NOT_CONFIGURED',
+      message: '登录服务暂不可用，请联系管理员'
+    })
+  }
   const method = options.method || 'GET'
   const uniMethod = method as unknown as UniApp.RequestOptions['method']
   const url = path.startsWith('http') ? path : `${trimSlash(SUPABASE_URL)}${path}`
   const headers: Record<string, string> = {
     apikey: SUPABASE_KEY,
-    Authorization: `Bearer ${options.token || SUPABASE_KEY}`,
     ...options.headers
   }
+  // 新版 publishable key 只放在 apikey；Authorization 仅接受用户或旧版 anon JWT。
+  if (options.token) headers.Authorization = `Bearer ${options.token}`
+  else if (SUPABASE_KEY.startsWith('eyJ')) headers.Authorization ||= `Bearer ${SUPABASE_KEY}`
 
   if (!options.raw) {
     headers['Content-Type'] = headers['Content-Type'] || 'application/json'
@@ -179,24 +187,21 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 export async function accountPasswordLogin(account: string, password: string) {
   return request<Session>('/functions/v1/driver-auth', {
     method: 'POST',
-    body: { type: 'password', account, password },
-    headers: { Authorization: `Bearer ${SUPABASE_KEY}` }
+    body: { type: 'password', account, password }
   })
 }
 
 export async function wechatPhoneLogin(phoneCode: string) {
   return request<Session>('/functions/v1/driver-auth', {
     method: 'POST',
-    body: { type: 'wechat-phone', phoneCode },
-    headers: { Authorization: `Bearer ${SUPABASE_KEY}` }
+    body: { type: 'wechat-phone', phoneCode }
   })
 }
 
 export async function refreshToken(refreshToken: string) {
   return request<Session>('/auth/v1/token?grant_type=refresh_token', {
     method: 'POST',
-    body: { refresh_token: refreshToken },
-    headers: { Authorization: `Bearer ${SUPABASE_KEY}` }
+    body: { refresh_token: refreshToken }
   })
 }
 

@@ -2,6 +2,7 @@
 import { computed, getCurrentInstance, nextTick, onUnmounted, ref, useSlots, watch } from 'vue'
 import NoteIcon from './NoteIcon.vue'
 import { projectMomentum, rubberband, spring } from '@/utils/spring'
+import { getSystemInsets } from '@/utils/systemInsets'
 
 const props = withDefaults(
   defineProps<{
@@ -17,6 +18,7 @@ const emit = defineEmits<{ 'update:show': [value: boolean] }>()
 
 const instance = getCurrentInstance()
 const slots = useSlots()
+const { bottom: safeBottom } = getSystemInsets()
 const mounted = ref(false)
 const scrimOn = ref(false)
 const offset = ref<number | null>(null)
@@ -25,6 +27,7 @@ const dragging = ref(false)
 let panelHeight = 0
 let cancelSpring: (() => void) | null = null
 let startY = 0
+let dragOffset = 0
 let lastY = 0
 let lastTime = 0
 let velocity = 0
@@ -78,14 +81,16 @@ function lockPageScroll(lock: boolean) {
 async function open() {
   const sequence = ++openSequence
   cancelSpring?.()
+  const wasMounted = mounted.value
   mounted.value = true
   lockPageScroll(true)
   await nextTick()
   panelHeight = await measure()
   if (sequence !== openSequence || !props.show) return
-  offset.value = panelHeight
+  const start = wasMounted ? offset.value ?? 0 : panelHeight
+  offset.value = start
   scrimOn.value = true
-  cancelSpring = spring(panelHeight, 0, {
+  cancelSpring = spring(start, 0, {
     damping: 1,
     response: 0.4,
     onUpdate: (value) => {
@@ -100,7 +105,6 @@ function close() {
   cancelSpring?.()
   dragging.value = false
   scrimOn.value = false
-  lockPageScroll(false)
   const target = panelHeight || 420
   cancelSpring = spring(offset.value ?? 0, target, {
     damping: 1,
@@ -112,6 +116,8 @@ function close() {
     onRest: () => {
       mounted.value = false
       offset.value = null
+      velocity = 0
+      lockPageScroll(false)
     }
   })
 }
@@ -123,8 +129,13 @@ function requestClose() {
 watch(() => props.show, (value) => (value ? void open() : close()), { immediate: true })
 
 onUnmounted(() => {
+  openSequence += 1
   cancelSpring?.()
   if (mounted.value) lockPageScroll(false)
+  // #ifdef H5
+  window.removeEventListener('mousemove', onMouseMove)
+  window.removeEventListener('mouseup', onMouseUp)
+  // #endif
 })
 
 function beginDrag(y: number) {
@@ -135,6 +146,7 @@ function beginDrag(y: number) {
   lastTime = Date.now()
   velocity = 0
   if (offset.value === null) offset.value = 0
+  dragOffset = offset.value
 }
 
 function moveDrag(y: number) {
@@ -144,16 +156,17 @@ function moveDrag(y: number) {
   velocity = ((y - lastY) / dt) * 1000
   lastY = y
   lastTime = now
-  const delta = y - startY
+  const delta = dragOffset + y - startY
   offset.value = delta >= 0 ? delta : rubberband(delta, 180)
 }
 
-function endDrag() {
+function endDrag(cancelled = false) {
   if (!dragging.value) return
   dragging.value = false
+  if (Date.now() - lastTime > 80) velocity = 0
   const current = offset.value ?? 0
   const projected = current + projectMomentum(velocity, 0.99)
-  if (projected > (panelHeight || 420) * 0.32 || velocity > 900) {
+  if (!cancelled && (projected > (panelHeight || 420) * 0.32 || velocity > 900)) {
     requestClose()
     return
   }
@@ -168,9 +181,13 @@ function endDrag() {
 }
 
 function onMouseDown(event: MouseEvent) {
-  if (Date.now() - lastTouchTime < 800) return
+  if (event.button !== 0 || Date.now() - lastTouchTime < 800) return
   mouseDown = true
   beginDrag(event.clientY)
+  // #ifdef H5
+  window.addEventListener('mousemove', onMouseMove)
+  window.addEventListener('mouseup', onMouseUp, { once: true })
+  // #endif
 }
 function onMouseMove(event: MouseEvent) {
   if (!mouseDown) return
@@ -179,6 +196,10 @@ function onMouseMove(event: MouseEvent) {
 function onMouseUp() {
   if (!mouseDown) return
   mouseDown = false
+  // #ifdef H5
+  window.removeEventListener('mousemove', onMouseMove)
+  window.removeEventListener('mouseup', onMouseUp)
+  // #endif
   endDrag()
 }
 function onTouchStart(event: TouchEvent) {
@@ -193,6 +214,9 @@ function onTouchMove(event: TouchEvent) {
 function onTouchEnd() {
   endDrag()
 }
+function onTouchCancel() {
+  endDrag(true)
+}
 </script>
 
 <template>
@@ -206,7 +230,7 @@ function onTouchEnd() {
     />
     <view
       class="note-sheet__panel"
-      :style="panelStyle"
+      :style="[panelStyle, { '--note-sheet-safe-bottom': `${safeBottom}px` }]"
       role="dialog"
       aria-modal="true"
       :aria-label="dialogLabel"
@@ -215,13 +239,10 @@ function onTouchEnd() {
         class="note-sheet__grip"
         aria-hidden="true"
         @mousedown="onMouseDown"
-        @mousemove="onMouseMove"
-        @mouseup="onMouseUp"
-        @mouseleave="onMouseUp"
         @touchstart="onTouchStart"
         @touchmove.stop.prevent="onTouchMove"
         @touchend="onTouchEnd"
-        @touchcancel="onTouchEnd"
+        @touchcancel="onTouchCancel"
       >
         <view class="note-sheet__grip-bar" />
       </view>
@@ -246,11 +267,14 @@ function onTouchEnd() {
 
 <style scoped lang="scss">
 .note-sheet {
+  box-sizing: border-box;
   position: fixed;
   inset: 0;
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  padding-right: var(--note-inset-right, env(safe-area-inset-right));
+  padding-left: var(--note-inset-left, env(safe-area-inset-left));
 }
 
 .note-sheet__scrim {
@@ -266,6 +290,7 @@ function onTouchEnd() {
 }
 
 .note-sheet__panel {
+  box-sizing: border-box;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -273,7 +298,8 @@ function onTouchEnd() {
   max-width: 640px;
   max-height: 86vh;
   max-height: 86dvh;
-  padding-bottom: env(safe-area-inset-bottom);
+  max-height: min(86dvh, calc(100dvh - var(--note-inset-top, env(safe-area-inset-top)) - 12px));
+  padding-bottom: max(var(--note-inset-bottom, env(safe-area-inset-bottom)), var(--note-sheet-safe-bottom, 0px));
   border-radius: var(--note-radius-xl) var(--note-radius-xl) 0 0;
   background: var(--note-surface);
   box-shadow: var(--note-shadow-floating);
@@ -283,6 +309,7 @@ function onTouchEnd() {
 
 .note-sheet__grip {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: center;
   height: 44rpx;
@@ -300,6 +327,7 @@ function onTouchEnd() {
 
 .note-sheet__head {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: space-between;
   gap: 16rpx;
@@ -314,6 +342,7 @@ function onTouchEnd() {
   color: var(--note-text);
   font-size: var(--note-font-title3);
   font-weight: 700;
+  line-height: 1.3;
   letter-spacing: var(--note-track-title);
 }
 
@@ -348,9 +377,11 @@ function onTouchEnd() {
   min-height: 0;
   max-height: 68vh;
   max-height: 68dvh;
+  overscroll-behavior: contain;
 }
 
 .note-sheet__footer {
+  flex: none;
   padding: 16rpx 32rpx 24rpx;
   border-top: 1rpx solid var(--note-separator);
 }

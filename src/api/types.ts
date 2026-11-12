@@ -34,4 +34,5 @@ export interface NoteDraft {
   mood: NoteMood
   images: string[]
   tags: string[]
+  createdAt?: string
 }

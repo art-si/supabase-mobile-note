@@ -32,9 +32,9 @@ const emit = defineEmits<{ undo: [] }>()
 <style scoped lang="scss">
 .undo-bar {
   position: fixed;
-  left: 24rpx;
-  right: 24rpx;
-  bottom: calc(var(--note-tabbar-height) + 20rpx);
+  left: calc(12px + var(--note-inset-left));
+  right: calc(12px + var(--note-inset-right));
+  bottom: calc(var(--note-tabbar-height) + var(--note-inset-bottom) + 12px);
   z-index: 29;
   display: flex;
   align-items: center;
@@ -42,7 +42,7 @@ const emit = defineEmits<{ undo: [] }>()
   max-width: 640px;
   margin: 0 auto;
   padding: 0 12rpx 0 28rpx;
-  height: 96rpx;
+  min-height: 52px;
   overflow: hidden;
   border: 1rpx solid var(--note-separator);
   border-radius: 999rpx;
@@ -86,6 +86,9 @@ const emit = defineEmits<{ undo: [] }>()
 }
 
 .undo-bar__action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
   height: 72rpx;
   min-height: 44px;
@@ -97,6 +100,7 @@ const emit = defineEmits<{ undo: [] }>()
   background: var(--note-accent-soft);
   font-size: var(--note-font-subhead);
   font-weight: 700;
+  line-height: 1.2;
   transition: transform var(--note-duration-fast) var(--note-ease);
 }
 

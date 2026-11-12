@@ -36,7 +36,7 @@ const emit = defineEmits<{ action: [] }>()
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 96rpx 48rpx;
+  padding: min(96rpx, 8vh) 40rpx;
   text-align: center;
 }
 
@@ -54,8 +54,11 @@ const emit = defineEmits<{ action: [] }>()
 .note-empty__title {
   margin-top: 32rpx;
   color: var(--note-text);
-  font-size: var(--note-font-subhead);
+  max-width: 100%;
+  font-size: var(--note-font-body);
   font-weight: 600;
+  line-height: 1.4;
+  text-wrap: balance;
 }
 
 .note-empty__desc {
@@ -64,9 +67,30 @@ const emit = defineEmits<{ action: [] }>()
   color: var(--note-text-2);
   font-size: var(--note-font-footnote);
   line-height: 1.5;
+  text-wrap: balance;
 }
 
 .note-empty__action {
   margin-top: 40rpx;
+  max-width: 100%;
+}
+
+@media (max-height: 600px) and (orientation: landscape) {
+  .note-empty {
+    padding-block: 32rpx;
+  }
+
+  .note-empty__badge {
+    width: 96rpx;
+    height: 96rpx;
+  }
+
+  .note-empty__title {
+    margin-top: 20rpx;
+  }
+
+  .note-empty__action {
+    margin-top: 24rpx;
+  }
 }
 </style>

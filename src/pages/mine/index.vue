@@ -11,13 +11,18 @@ import { useNotesStore } from '@/stores/notes'
 import { useStorageModeStore } from '@/stores/storageMode'
 import { APPEARANCE_OPTIONS, THEME_PRESETS } from '@/stores/theme'
 import { dayKey, formatDayKey } from '@/utils/format'
+import { getSystemInsets } from '@/utils/systemInsets'
+import { getAllLocalNotes } from '@/api/localNotes'
 
 const { theme, themeName, themeClass, isDark } = usePageTheme()
 const auth = useAuthStore()
 const store = useNotesStore()
 const storage = useStorageModeStore()
+const { top: statusInset, bottom: safeBottom } = getSystemInsets()
 const confirmOpen = ref(false)
+const transferChoiceOpen = ref(false)
 const pendingAction = ref<'local' | 'cloud' | 'logout'>('local')
+const localNoteCount = computed(() => getAllLocalNotes().length)
 
 const account = computed(() => {
   if (storage.mode === 'local') return '仅保存在此设备'
@@ -63,6 +68,10 @@ onLoad(async () => {
 })
 
 onBackPress(() => {
+  if (transferChoiceOpen.value) {
+    transferChoiceOpen.value = false
+    return true
+  }
   if (!confirmOpen.value) return false
   confirmOpen.value = false
   return true
@@ -74,8 +83,25 @@ function switchStorageMode(mode: 'local' | 'cloud') {
     uni.showToast({ title: '云端存储暂未开放，请联系管理员', icon: 'none' })
     return
   }
+  if (mode === 'cloud' && localNoteCount.value > 0) {
+    transferChoiceOpen.value = true
+    return
+  }
   pendingAction.value = mode
   confirmOpen.value = true
+}
+
+function beginCloudLogin(importLocal: boolean) {
+  uni.setStorageSync('note-pending-local-import', importLocal ? 'yes' : 'no')
+  store.reset()
+  auth.clearSession(false)
+  storage.setMode('cloud')
+  uni.reLaunch({ url: '/pages/login/index' })
+}
+
+function chooseCloudImport(value: string) {
+  transferChoiceOpen.value = false
+  beginCloudLogin(value === 'import')
 }
 
 function logout() {
@@ -90,6 +116,10 @@ async function confirmMineAction() {
     await auth.logout()
     return
   }
+  if (action === 'cloud') {
+    beginCloudLogin(false)
+    return
+  }
   auth.clearSession(false)
   storage.setMode(action)
   uni.reLaunch({ url: action === 'local' ? '/pages/timeline/index' : '/pages/login/index' })
@@ -98,7 +128,7 @@ async function confirmMineAction() {
 
 <template>
   <wd-config-provider :theme="themeName">
-    <view class="page mine-page" :class="[themeClass, { 'note-dark': isDark }]">
+    <view class="page mine-page" :class="[themeClass, { 'note-dark': isDark }]" :style="{ '--note-status-inset': `${statusInset}px`, '--note-safe-bottom': `${safeBottom}px` }">
       <NoteNavBar title="我的" />
 
       <view class="mine-body">
@@ -208,7 +238,7 @@ async function confirmMineAction() {
               <NoteIcon name="info" size="34rpx" />
               <text>版本</text>
             </view>
-            <text class="mine-row__value">1.0.0</text>
+            <text class="mine-row__value">1.0.1</text>
           </view>
         </view>
 
@@ -219,9 +249,20 @@ async function confirmMineAction() {
       </view>
 
       <NoteActionSheet
+        v-model:show="transferChoiceOpen"
+        title="导入本机记录？"
+        :description="`检测到 ${localNoteCount} 条本机笔记。导入后会复制到云端，原记录仍保留在本机。`"
+        cancel-text="暂不切换"
+        :items="[
+          { value: 'import', label: '导入本机记录并继续', icon: 'cloud' },
+          { value: 'skip', label: '不导入，直接使用云端', icon: 'close' }
+        ]"
+        @select="chooseCloudImport"
+      />
+      <NoteActionSheet
         v-model:show="confirmOpen"
         :title="pendingAction === 'logout' ? '退出登录' : pendingAction === 'local' ? '切换到本机存储' : '切换到 Supabase 云端'"
-        :description="pendingAction === 'logout' ? '退出后需要重新登录才能查看你的笔记。' : pendingAction === 'local' ? '本机与云端笔记各自保存，不会互相搬运。切换后需要重新登录才能查看云端笔记。' : '本机笔记会继续保留在这台设备，不会自动上传。切换后请登录云端账号。'"
+        :description="pendingAction === 'logout' ? '退出后需要重新登录才能查看你的云端笔记。' : pendingAction === 'local' ? '切换后查看这台设备上的记录，云端记录仍会保留。' : '登录后可在云端保存记录，并在其他设备继续使用。'"
         :items="[{ value: 'confirm', label: pendingAction === 'logout' ? '退出登录' : pendingAction === 'local' ? '切换到本机' : '前往登录', icon: pendingAction === 'logout' ? 'logout' : pendingAction === 'local' ? 'phone' : 'cloud', danger: pendingAction === 'logout' }]"
         @select="confirmMineAction"
       />
@@ -232,25 +273,26 @@ async function confirmMineAction() {
 
 <style scoped lang="scss">
 .mine-page {
-  padding-bottom: calc(var(--note-tabbar-height) + 48rpx);
+  padding-bottom: calc(var(--note-tabbar-height) + var(--note-inset-bottom) + 48rpx);
 }
 
 .mine-body {
   max-width: 760rpx;
   margin: 0 auto;
-  padding: calc(132rpx + env(safe-area-inset-top)) 32rpx 0;
+  padding: calc(66px + var(--note-inset-top)) 32rpx 0;
 }
 
 .mine-profile {
   display: flex;
   align-items: center;
-  gap: 28rpx;
-  padding: 40rpx 32rpx;
+  gap: 24rpx;
+  padding: 32rpx;
   border-radius: 36rpx;
   background: linear-gradient(135deg, var(--note-surface), var(--note-surface-2));
 }
 
 .mine-avatar {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -310,6 +352,10 @@ async function confirmMineAction() {
 }
 
 .mine-stat__value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
   color: var(--note-accent);
   font-size: var(--note-font-title1);
   font-weight: 700;
@@ -318,7 +364,8 @@ async function confirmMineAction() {
 
 .mine-stat__value--small {
   font-size: var(--note-font-subhead);
-  line-height: 1.6;
+  line-height: 1.2;
+  text-align: center;
 }
 
 .mine-stat__label {
@@ -421,9 +468,10 @@ async function confirmMineAction() {
 
 .mine-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 24rpx;
+  gap: 16rpx 24rpx;
   min-height: 96rpx;
   padding: 12rpx 0;
 }
@@ -435,6 +483,7 @@ async function confirmMineAction() {
 
 .mine-row__label {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 16rpx;
   color: var(--note-text);
@@ -449,7 +498,9 @@ async function confirmMineAction() {
 
 .mine-swatches {
   display: flex;
-  gap: 20rpx;
+  flex: none;
+  gap: 16rpx;
+  margin-left: auto;
 }
 
 .mine-swatch {
@@ -495,16 +546,24 @@ async function confirmMineAction() {
 }
 
 .mine-appearance__option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: 1;
   min-width: 0;
   min-height: 44px;
   margin: 0;
-  padding: 0 12rpx;
+  padding: 8rpx 12rpx;
   border: 0;
   border-radius: var(--note-radius-sm);
   color: var(--note-text-2);
   background: transparent;
   font-size: var(--note-font-footnote);
+  line-height: 1.2;
+  transition:
+    color var(--note-duration-fast) var(--note-ease),
+    background-color var(--note-duration-fast) var(--note-ease),
+    box-shadow var(--note-duration-fast) var(--note-ease);
 }
 
 .mine-appearance__option::after { border: 0; }

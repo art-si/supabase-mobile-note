@@ -279,6 +279,7 @@ function clear() {
   font-size: var(--note-font-subhead);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+  line-height: 1.2;
 }
 
 .cal__cell--out .cal__num {
@@ -316,10 +317,6 @@ function clear() {
   background: var(--note-accent);
 }
 
-.cal__cell--selected .cal__dot--on {
-  background: var(--note-accent-contrast);
-}
-
 .cal__summary {
   display: block;
   margin-top: 16rpx;
@@ -328,6 +325,7 @@ function clear() {
   text-align: center;
   color: var(--note-text-2);
   font-size: var(--note-font-footnote);
+  line-height: 1.5;
 }
 
 .cal__actions {

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { createNote, deleteNote, listDayCounts, listNotes, listNotesByDay, updateNote } from '@/api/notes'
-import { NOTE_IMAGE_SIGN_TTL, removeNoteImages, signNoteImages } from '@/api/noteImages'
-import { countLocalNotesByDay, createLocalNote, deleteLocalNote, listLocalNotes, listLocalNotesByDay, updateLocalNote } from '@/api/localNotes'
+import { NOTE_IMAGE_SIGN_TTL, removeNoteImages, signNoteImages, uploadNoteImage } from '@/api/noteImages'
+import { countLocalNotesByDay, createLocalNote, deleteLocalNote, getAllLocalNotes, listLocalNotes, listLocalNotesByDay, updateLocalNote } from '@/api/localNotes'
 import { clearLocalNoteImageUrlCache, resolveLocalNoteImage } from '@/api/localNoteImages'
 import type { Note, NoteDraft } from '@/api/types'
 import { dayKey, groupNotesByDay, monthKey, monthRange } from '@/utils/format'
@@ -33,6 +33,7 @@ interface NotesState {
 }
 
 const UNDO_WINDOW_MS = 5000
+const IMPORTED_LOCAL_NOTES_KEY = 'note-imported-local-notes'
 let removalTimer: ReturnType<typeof setTimeout> | null = null
 const hiddenRemovalIds = new Set<string>()
 let removalEpoch = 0
@@ -81,6 +82,36 @@ export const useNotesStore = defineStore('notes', {
     imageUrl: (state) => (path: string) => state.imageUrls[path]?.url ?? ''
   },
   actions: {
+    async importLocalToCloud(token: string, userId: string) {
+      const localNotes = getAllLocalNotes()
+      const stored = uni.getStorageSync(IMPORTED_LOCAL_NOTES_KEY)
+      let imported: Record<string, string[]> = {}
+      try {
+        const parsed: unknown = typeof stored === 'string' ? JSON.parse(stored) : stored
+        if (parsed && typeof parsed === 'object') imported = parsed as Record<string, string[]>
+      } catch {
+        imported = {}
+      }
+      const done = new Set(imported[userId] ?? [])
+      let count = 0
+      for (const note of localNotes) {
+        if (done.has(note.id)) continue
+        const images: string[] = []
+        for (const path of note.images) images.push(await uploadNoteImage(token, userId, path))
+        await createNote(token, {
+          content: note.content,
+          mood: note.mood,
+          images,
+          tags: note.tags,
+          createdAt: note.createdAt
+        })
+        done.add(note.id)
+        imported[userId] = [...done]
+        uni.setStorageSync(IMPORTED_LOCAL_NOTES_KEY, JSON.stringify(imported))
+        count += 1
+      }
+      return count
+    },
     async requireToken() {
       if (getStorageMode() === 'local') return ''
       const auth = useAuthStore()

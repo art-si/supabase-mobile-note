@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import NoteIcon from './NoteIcon.vue'
+import { getSystemInsets } from '@/utils/systemInsets'
 
 withDefaults(
   defineProps<{
@@ -11,6 +12,7 @@ withDefaults(
     back: false
   }
 )
+const { top: statusInset } = getSystemInsets()
 
 function goBack() {
   const pages = getCurrentPages()
@@ -23,14 +25,14 @@ function goBack() {
 </script>
 
 <template>
-  <view class="note-navbar">
+  <view class="note-navbar" :style="{ '--note-status-inset': `${statusInset}px` }">
     <view class="note-navbar__side">
       <button v-if="back" class="note-navbar__back" aria-label="返回上一页" hover-class="note-navbar__back--pressed" @tap="goBack">
         <NoteIcon name="back" size="40rpx" />
       </button>
       <slot v-else name="left" />
     </view>
-    <text class="note-navbar__title">{{ title }}</text>
+    <view class="note-navbar__title"><slot name="title">{{ title }}</slot></view>
     <view class="note-navbar__side note-navbar__side--right">
       <slot name="right" />
     </view>
@@ -45,11 +47,11 @@ function goBack() {
   right: 0;
   z-index: 30;
   display: grid;
-  grid-template-columns: minmax(88rpx, auto) minmax(0, 1fr) minmax(88rpx, auto);
+  grid-template-columns: minmax(44px, auto) minmax(0, 1fr) minmax(44px, auto);
   align-items: center;
   gap: 8rpx;
-  height: calc(88rpx + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) 16rpx 0;
+  height: var(--note-nav-height);
+  padding: var(--note-inset-top) calc(8px + var(--note-inset-right)) 0 calc(8px + var(--note-inset-left));
   background: var(--note-material);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);

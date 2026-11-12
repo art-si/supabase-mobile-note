@@ -2,10 +2,12 @@
 import NoteIcon from './NoteIcon.vue'
 import type { NoteIconName } from './icon-glyphs'
 import { haptic } from '@/utils/haptic'
+import { getSystemInsets } from '@/utils/systemInsets'
 
 type TabKey = 'timeline' | 'mine'
 
 const props = defineProps<{ active: TabKey }>()
+const { bottom: safeBottom } = getSystemInsets()
 
 const items: Array<{ key: TabKey; label: string; icon: NoteIconName; url: string }> = [
   { key: 'timeline', label: '时间轴', icon: 'timeline', url: '/pages/timeline/index' },
@@ -27,7 +29,7 @@ function compose() {
 </script>
 
 <template>
-  <view class="note-tabbar note-material--thick" role="navigation" aria-label="主导航">
+  <view class="note-tabbar note-material--thick" :style="{ '--note-safe-bottom': `${safeBottom}px` }" role="navigation" aria-label="主导航">
     <button
       class="note-tabbar__item"
       :class="{ 'note-tabbar__item--active': active === 'timeline' }"
@@ -66,8 +68,8 @@ function compose() {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  height: var(--note-tabbar-height);
-  padding: 0 24rpx env(safe-area-inset-bottom);
+  height: calc(var(--note-tabbar-height) + var(--note-inset-bottom));
+  padding: 0 calc(12px + var(--note-inset-right)) var(--note-inset-bottom) calc(12px + var(--note-inset-left));
   border-top: 1rpx solid var(--note-separator);
   box-shadow: 0 -8rpx 32rpx rgba(30, 52, 80, 0.05);
 }
@@ -78,8 +80,8 @@ function compose() {
   align-items: center;
   justify-content: center;
   gap: 4rpx;
-  height: 96rpx;
-  min-height: 44px;
+  height: 52px;
+  min-height: 48px;
   margin: 0;
   padding: 0;
   border: 0;

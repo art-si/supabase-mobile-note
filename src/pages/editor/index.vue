@@ -24,6 +24,7 @@ import { isLocalStorageMode } from '@/utils/storageMode'
 import { formatDateTime } from '@/utils/format'
 import { haptic } from '@/utils/haptic'
 import { editorInitialHtml, htmlToPlainText } from '@/utils/richText'
+import { getSystemInsets } from '@/utils/systemInsets'
 
 const MAX_LENGTH = 5000
 const MAX_TAGS = 8
@@ -49,6 +50,7 @@ const { themeName, themeClass, isDark } = usePageTheme()
 const auth = useAuthStore()
 const store = useNotesStore()
 const storage = useStorageModeStore()
+const { top: statusInset, bottom: safeBottom } = getSystemInsets()
 
 const noteId = ref('')
 const original = ref<Note | null>(null)
@@ -58,6 +60,7 @@ const tagInput = ref('')
 const tagOpen = ref(false)
 const aiOpen = ref(false)
 const imageSourceOpen = ref(false)
+const dateTimeOpen = ref(false)
 const confirmOpen = ref(false)
 const confirmAction = ref<'discard' | 'delete'>('discard')
 const listening = ref(false)
@@ -65,6 +68,14 @@ const voiceMessage = ref('')
 const saving = ref(false)
 const deleting = ref(false)
 const createdAt = ref(new Date().toISOString())
+const dateValue = computed(() => {
+  const date = new Date(createdAt.value)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+})
+const timeValue = computed(() => {
+  const date = new Date(createdAt.value)
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+})
 
 const html = ref('')
 const textLength = ref(0)
@@ -136,6 +147,7 @@ const dirty = computed(() => {
     return (
       html.value !== editorInitialHtml(original.value.content) ||
       tags.value.join('\u0000') !== (original.value.tags ?? []).join('\u0000') ||
+      createdAt.value !== original.value.createdAt ||
       imagesChanged
     )
   }
@@ -143,13 +155,28 @@ const dirty = computed(() => {
 })
 
 const toolbarBottom = computed(() =>
-  keyboardHeight.value > 0 ? `${keyboardHeight.value}px` : 'env(safe-area-inset-bottom)'
+  keyboardHeight.value > 0 ? `${keyboardHeight.value}px` : '0px'
 )
-const emojiBottom = computed(() => `calc(${toolbarBottom.value} + 100rpx)`)
-const voiceBottom = computed(() => `calc(${toolbarBottom.value} + 116rpx)`)
+const toolbarInset = computed(() => keyboardHeight.value > 0 ? '0px' : 'var(--note-inset-bottom)')
+const emojiBottom = computed(() => `calc(${toolbarBottom.value} + 50px + ${toolbarInset.value})`)
+const voiceBottom = computed(() => `calc(${toolbarBottom.value} + 58px + ${toolbarInset.value})`)
 
 function onKeyboardHeightChange(result: { height: number }) {
   keyboardHeight.value = result.height
+}
+
+function updateCreatedDate(value: string) {
+  const [year, month, day] = value.split('-').map(Number)
+  const date = new Date(createdAt.value)
+  date.setFullYear(year!, month! - 1, day!)
+  createdAt.value = date.toISOString()
+}
+
+function updateCreatedTime(value: string) {
+  const [hour, minute] = value.split(':').map(Number)
+  const date = new Date(createdAt.value)
+  date.setHours(hour!, minute!, 0, 0)
+  createdAt.value = date.toISOString()
 }
 
 // #ifdef H5
@@ -212,6 +239,7 @@ onUnload(() => {
 })
 
 onBackPress(() => {
+  if (dateTimeOpen.value) { dateTimeOpen.value = false; return true }
   if (imageSourceOpen.value) { imageSourceOpen.value = false; return true }
   if (confirmOpen.value) { confirmOpen.value = false; return true }
   if (aiOpen.value) { aiOpen.value = false; return true }
@@ -294,12 +322,9 @@ function addSuggestedTag(tag: string) {
   addTag()
 }
 
-function toggleVoice() {
+function startVoice() {
   // #ifdef H5
-  if (listening.value) {
-    stopVoice()
-    return
-  }
+  if (listening.value) return
   const speechWindow = window as typeof window & {
     SpeechRecognition?: new () => SpeechRecognitionInstance
     webkitSpeechRecognition?: new () => SpeechRecognitionInstance
@@ -340,7 +365,7 @@ function toggleVoice() {
   try {
     session.start()
     listening.value = true
-    voiceMessage.value = '正在聆听，点击麦克风结束'
+    voiceMessage.value = '正在聆听，松开结束'
   } catch {
     recognition = null
     uni.showToast({ title: '无法启动语音输入，请重试', icon: 'none' })
@@ -483,11 +508,16 @@ function previewAttachment(attachment: Attachment) {
 
 function cancel() {
   if (!dirty.value) {
-    uni.navigateBack()
+    navigateToPreviousPage()
     return
   }
   confirmAction.value = 'discard'
   confirmOpen.value = true
+}
+
+function navigateToPreviousPage() {
+  if (getCurrentPages().length > 1) uni.navigateBack()
+  else uni.reLaunch({ url: '/pages/timeline/index' })
 }
 
 async function save() {
@@ -497,7 +527,8 @@ async function save() {
     content: html.value.trim() ? html.value : '<p><br></p>',
     mood: mood.value,
     images: doneImages.value.map((item) => item.objectPath),
-    tags: tags.value
+    tags: tags.value,
+    createdAt: createdAt.value
   }
   try {
     if (isEdit.value) {
@@ -524,7 +555,7 @@ function remove() {
 async function confirmEditorAction() {
   if (confirmAction.value === 'discard') {
     allowExit = true
-    uni.navigateBack()
+    navigateToPreviousPage()
     return
   }
   if (deleting.value) return
@@ -544,8 +575,13 @@ async function confirmEditorAction() {
 
 <template>
   <wd-config-provider :theme="themeName">
-    <view class="page editor-page" :class="[themeClass, { 'note-dark': isDark }]">
-      <NoteNavBar :title="formatDateTime(createdAt)">
+    <view class="page editor-page" :class="[themeClass, { 'note-dark': isDark }]" :style="{ '--note-status-inset': `${statusInset}px`, '--note-safe-bottom': `${safeBottom}px` }">
+      <NoteNavBar>
+        <template #title>
+          <button class="editor-date-title" aria-label="修改笔记日期和时间" @tap="dateTimeOpen = true">
+            {{ formatDateTime(createdAt) }}
+          </button>
+        </template>
         <template #left>
           <wd-button class="editor-nav-btn" variant="text" size="medium" aria-label="取消编辑" @click="cancel">
             <NoteIcon name="back" size="40rpx" />
@@ -577,7 +613,16 @@ async function confirmEditorAction() {
             @statuschange="onStatusChange"
           />
           <view class="editor-input-actions">
-            <button class="editor-tool" :class="{ 'editor-tool--active': listening }" :aria-pressed="listening" :aria-label="listening ? '结束语音输入' : '语音输入'" @mousedown.prevent @tap="toggleVoice">
+            <button
+              class="editor-tool"
+              :class="{ 'editor-tool--active': listening }"
+              :aria-pressed="listening"
+              :aria-label="listening ? '松开结束语音输入' : '按住语音输入'"
+              @mousedown.prevent
+              @touchstart.stop.prevent="startVoice"
+              @touchend.stop.prevent="stopVoice"
+              @touchcancel.stop.prevent="stopVoice"
+            >
               <NoteIcon name="mic" size="42rpx" />
             </button>
             <button class="editor-tool" aria-label="图片识别工具" @mousedown.prevent @tap="aiOpen = true">
@@ -620,11 +665,11 @@ async function confirmEditorAction() {
           <view v-if="tags.length" class="editor-tags" aria-label="已添加的标签">
             <view v-for="tag in tags" :key="tag" class="editor-tag">
               <view class="editor-tag__label">
-                <NoteIcon name="tag" size="24rpx" />
+                <NoteIcon name="tag" size="28rpx" />
                 <text class="editor-tag__text">{{ tag }}</text>
               </view>
               <button class="editor-tag__remove" :aria-label="`移除标签 ${tag}`" @tap="removeTag(tag)">
-                <NoteIcon name="close" size="22rpx" />
+                <NoteIcon name="close" size="28rpx" />
               </button>
             </view>
           </view>
@@ -645,7 +690,19 @@ async function confirmEditorAction() {
         <NoteEmojiPanel @pick="onEmojiPick" @close="emojiOpen = false" />
       </view>
 
-      <view class="editor-toolbar" :style="{ bottom: toolbarBottom }" role="toolbar" aria-label="笔记编辑工具">
+      <NoteSheet v-model:show="dateTimeOpen" title="记录时间" label="选择笔记的记录日期和时间">
+        <view class="editor-datetime-sheet">
+          <picker mode="date" :value="dateValue" @change="updateCreatedDate($event.detail.value)">
+            <view class="editor-datetime-row"><text>日期</text><text>{{ dateValue }}</text><NoteIcon name="chevron-right" size="28rpx" /></view>
+          </picker>
+          <picker mode="time" :value="timeValue" @change="updateCreatedTime($event.detail.value)">
+            <view class="editor-datetime-row"><text>时间</text><text>{{ timeValue }}</text><NoteIcon name="chevron-right" size="28rpx" /></view>
+          </picker>
+        </view>
+        <template #footer><button class="note-btn note-btn--primary editor-sheet__done" @tap="dateTimeOpen = false">完成</button></template>
+      </NoteSheet>
+
+      <view class="editor-toolbar" :style="{ bottom: toolbarBottom, '--note-toolbar-inset': toolbarInset }" role="toolbar" aria-label="笔记编辑工具">
         <view class="editor-toolbar__group">
           <button class="editor-tool" aria-label="添加图片" @mousedown.prevent @tap="addImages">
             <NoteIcon name="image" size="44rpx" />
@@ -779,7 +836,7 @@ async function confirmEditorAction() {
                 :aria-label="`添加常用标签 ${tag}`"
                 @tap="addSuggestedTag(tag)"
               >
-                <NoteIcon name="add" size="24rpx" />
+                <NoteIcon name="add" size="28rpx" />
                 {{ tag }}
               </button>
             </view>
@@ -789,11 +846,11 @@ async function confirmEditorAction() {
           <view v-if="tags.length" class="editor-tags editor-tags--panel" aria-label="已添加的标签">
             <view v-for="tag in tags" :key="tag" class="editor-tag">
               <view class="editor-tag__label">
-                <NoteIcon name="tag" size="24rpx" />
+                <NoteIcon name="tag" size="28rpx" />
                 <text class="editor-tag__text">{{ tag }}</text>
               </view>
               <button class="editor-tag__remove" :aria-label="`移除标签 ${tag}`" @tap="removeTag(tag)">
-                <NoteIcon name="close" size="22rpx" />
+                <NoteIcon name="close" size="28rpx" />
               </button>
             </view>
           </view>
@@ -808,9 +865,33 @@ async function confirmEditorAction() {
 
 <style scoped lang="scss">
 .editor-page {
-  padding-bottom: calc(160rpx + env(safe-area-inset-bottom));
+  padding-bottom: calc(80px + var(--note-inset-bottom));
   background: var(--note-surface);
 }
+
+.editor-date-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  max-width: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0 6rpx;
+  border: 0;
+  color: var(--note-accent);
+  background: transparent;
+  font-size: clamp(14px, 3.9vw, 17px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-date-title::after { border: 0; }
+.editor-datetime-sheet { display: grid; gap: 12rpx; padding: 8rpx 32rpx 24rpx; }
+.editor-datetime-row { display: flex; align-items: center; gap: 16rpx; min-height: 58px; padding: 0 20rpx; border: 1rpx solid var(--note-separator); border-radius: var(--note-radius-md); color: var(--note-text-2); background: var(--note-surface-2); font-size: var(--note-font-body); }
+.editor-datetime-row text:nth-child(2) { margin-left: auto; color: var(--note-accent); font-variant-numeric: tabular-nums; }
+.editor-datetime-row .note-icon { color: var(--note-text-3); }
 
 :deep(.editor-page .note-navbar__title) {
   color: var(--note-accent);
@@ -838,8 +919,9 @@ async function confirmEditorAction() {
 }
 
 .editor-body {
-  padding: calc(112rpx + env(safe-area-inset-top)) 32rpx 0;
+  padding: calc(var(--note-nav-height) + 12px) 32rpx 0;
 }
+
 
 .editor-paper {
   margin-top: 0;
@@ -923,27 +1005,35 @@ async function confirmEditorAction() {
 }
 
 .editor-tags--panel {
-  margin: 24rpx 0;
+  margin: 8rpx 0 16rpx;
 }
 
 .editor-tag {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 8rpx;
+  gap: 0;
   max-width: 100%;
   min-height: 44px;
-  padding-left: 20rpx;
-  border-radius: 999rpx;
+  padding-left: 12px;
   color: var(--note-accent);
-  background: var(--note-accent-soft);
-  font-size: var(--note-font-footnote);
+  font-size: var(--note-font-subhead);
   font-weight: 600;
 }
 
+.editor-tag::before {
+  content: '';
+  position: absolute;
+  inset: 6px 0;
+  border-radius: 999px;
+  background: var(--note-accent-soft);
+}
+
 .editor-tag__label {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8rpx;
+  gap: 4px;
   min-width: 0;
   line-height: 1;
 }
@@ -963,6 +1053,7 @@ async function confirmEditorAction() {
 }
 
 .editor-tag__remove {
+  position: relative;
   display: flex;
   flex: none;
   align-items: center;
@@ -982,7 +1073,7 @@ async function confirmEditorAction() {
 }
 
 .editor-tag__remove:active {
-  background: rgba(var(--note-accent-rgb), 0.12);
+  opacity: 0.65;
 }
 
 .editor-tag-entry {
@@ -1131,14 +1222,14 @@ async function confirmEditorAction() {
 
 .editor-toolbar {
   position: fixed;
-  left: 0;
-  right: 0;
+  left: var(--note-inset-left);
+  right: var(--note-inset-right);
   z-index: 35;
   display: flex;
   align-items: center;
   gap: 8rpx;
-  height: 100rpx;
-  padding: 0 16rpx;
+  height: calc(50px + var(--note-toolbar-inset, 0px));
+  padding: 0 16rpx var(--note-toolbar-inset, 0px);
   overflow-x: auto;
   background: var(--note-material-thick);
   backdrop-filter: blur(20px) saturate(180%);
@@ -1200,8 +1291,8 @@ async function confirmEditorAction() {
 
 .editor-voice {
   position: fixed;
-  left: 24rpx;
-  right: 24rpx;
+  left: calc(12px + var(--note-inset-left));
+  right: calc(12px + var(--note-inset-right));
   z-index: 37;
   display: flex;
   align-items: center;
@@ -1322,7 +1413,7 @@ async function confirmEditorAction() {
   font-weight: 600;
 }
 
-.editor-selected-title { margin-top: 28rpx; }
+.editor-selected-title { margin-top: 20rpx; margin-bottom: 6rpx; font-size: var(--note-font-footnote); }
 
 .editor-suggestions__list {
   display: flex;
@@ -1331,6 +1422,8 @@ async function confirmEditorAction() {
 }
 
 .editor-suggestion {
+  position: relative;
+  z-index: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1338,11 +1431,21 @@ async function confirmEditorAction() {
   min-height: 44px;
   margin: 0;
   padding: 0 24rpx;
-  border: 1rpx solid var(--note-separator);
-  border-radius: 999rpx;
+  border: 0;
   color: var(--note-text-2);
-  background: var(--note-surface);
+  background: transparent;
   font-size: var(--note-font-footnote);
+  line-height: 1.2;
+}
+
+.editor-suggestion::before {
+  content: '';
+  position: absolute;
+  inset: 6px 0;
+  z-index: -1;
+  border: 1rpx solid var(--note-separator);
+  border-radius: 999px;
+  background: var(--note-surface);
 }
 
 .editor-suggestion::after {
@@ -1356,8 +1459,8 @@ async function confirmEditorAction() {
 
 .editor-emoji {
   position: fixed;
-  left: 0;
-  right: 0;
+  left: var(--note-inset-left);
+  right: var(--note-inset-right);
   z-index: 36;
   animation: editor-emoji-in var(--note-duration) var(--note-ease);
 }

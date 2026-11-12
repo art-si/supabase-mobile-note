@@ -52,8 +52,23 @@ page,
   --note-radius-lg: 28rpx;
   --note-radius-xl: 40rpx;
   --note-control-height: max(88rpx, 44px);
-  --note-nav-height: calc(88rpx + env(safe-area-inset-top));
-  --note-tabbar-height: calc(112rpx + env(safe-area-inset-bottom));
+  --note-nav-height: calc(44px + var(--note-inset-top));
+  --note-tabbar-height: max(112rpx, 60px);
+}
+
+/* Capacitor supplies CSS insets on Android WebViews where env() stays zero.
+   Recompute at the page/control boundary so Uni-app's mini-program fallback applies too. */
+:root,
+page,
+.page,
+.wd-root-portal,
+.note-navbar,
+.note-tabbar {
+  --note-inset-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), var(--note-status-inset, 0px));
+  --note-inset-bottom: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px), var(--note-safe-bottom, 0px));
+  --note-inset-left: max(env(safe-area-inset-left, 0px), var(--safe-area-inset-left, 0px));
+  --note-inset-right: max(env(safe-area-inset-right, 0px), var(--safe-area-inset-right, 0px));
+  --note-nav-height: calc(44px + var(--note-inset-top));
 }
 
 /* 浮层 chrome 统一材质：内容在其下方滚动，而不是被不透明条切掉。 */
@@ -72,12 +87,14 @@ page,
 .page {
   min-height: 100vh;
   min-height: 100dvh;
+  padding-left: var(--note-inset-left);
+  padding-right: var(--note-inset-right);
   color: var(--note-text);
   background: var(--note-bg);
 }
 
 .safe-bottom {
-  padding-bottom: calc(24rpx + env(safe-area-inset-bottom));
+  padding-bottom: calc(24rpx + var(--note-inset-bottom));
 }
 
 .note-card {

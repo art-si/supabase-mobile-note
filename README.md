@@ -11,7 +11,7 @@ Apple Design 风格的时间轴记事本。骨架来自 `supabase-mobile-tms-dri
 - 图片附件：拍照 / 相册选图，最多 9 张、单张 10MB；本机模式保存到设备，云端模式使用私有桶 `note-images` 与签名 URL
 - 笔记管理：新增 / 修改 / 撤销删除，正文、标签与图片在移动端和云端管理页互通
 - 我的：账号信息、主题色（蓝 / 靛 / 青）、退出登录
-- 跟随系统深色模式，无应用内外观开关（HIG 要求）
+- 外观支持跟随系统、浅色与深色；主题色、系统栏和弹窗材质同步切换
 
 ## 技术栈
 
@@ -51,7 +51,13 @@ cd android
 .\gradlew.bat :app:assembleDebug
 ```
 
-生成文件位于 `android/app/build/outputs/apk/debug/app-debug.apk`，使用 Android 调试证书签名。正式发布仍需配置自己的应用标识、签名及发布流程；语音输入取决于设备 WebView 的支持情况。
+生成文件位于 `android/app/build/outputs/apk/debug/app-debug.apk`。测试包固定使用本地 `android/app/shiguang-debug.keystore`（Git 忽略）签名，请备份并在更换打包电脑时沿用该文件，缺失时不要重新生成不同的密钥。
+
+Android 系统栏使用 Capacitor 注入的 `--safe-area-inset-*` 与 CSS `env()` 合并计算，三键导航、手势导航和横屏侧边安全区共用这套间距。微信小程序的自定义顶部栏另外避让原生菜单胶囊。
+
+覆盖更新时保持包名 `com.shiguang.notes` 与上述签名不变，递增 `android/app/build.gradle` 的 `versionCode`，并同步应用版本。直接安装新版即可保留本机笔记，无需卸载。当前版本为 1.0.1（101），与已交付的 1.0（1）使用同一证书。旧包及新包的证书 SHA-256 均应为 `b963c4b6517b0e0684203bd856fba0a3f4e0635930edb15503b1d621c195226e`。
+
+正式发布仍需规划签名及发布流程；语音输入取决于设备 WebView 的支持情况。
 
 ## 数据库
 

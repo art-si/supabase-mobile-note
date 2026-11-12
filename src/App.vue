@@ -5,7 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useStorageModeStore } from '@/stores/storageMode'
 import { useDarkMode } from '@/composables/useDarkMode'
 // #ifdef H5
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, SystemBars, SystemBarsStyle } from '@capacitor/core'
 import { App as NativeApp } from '@capacitor/app'
 // #endif
 
@@ -22,6 +22,10 @@ watch(
     root.classList.toggle('note-appearance-dark', dark)
     root.classList.toggle('note-appearance-light', !dark)
     root.style.colorScheme = dark ? 'dark' : 'light'
+    if (Capacitor.getPlatform() === 'android') {
+      void SystemBars.setStyle({ style: dark ? SystemBarsStyle.Dark : SystemBarsStyle.Light })
+        .catch((error) => console.warn('system bar appearance update failed', error))
+    }
   },
   { immediate: true }
 )
@@ -169,6 +173,10 @@ button,
 input,
 textarea {
   font-family: inherit;
+}
+
+button {
+  line-height: 1.2;
 }
 
 button:focus-visible,

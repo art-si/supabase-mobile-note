@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { onBackPress, onLoad, onPageScroll, onPullDownRefresh, onReachBottom, onShow, onUnload } from '@dcloudio/uni-app'
+import { onBackPress, onLoad, onPageScroll, onPullDownRefresh, onReachBottom, onResize, onShow, onUnload } from '@dcloudio/uni-app'
 import NoteCalendar from '@/components/common/NoteCalendar.vue'
 import NoteEmpty from '@/components/common/NoteEmpty.vue'
 import NoteIcon from '@/components/common/NoteIcon.vue'
@@ -16,11 +16,14 @@ import type { Note } from '@/api/types'
 import { WEEKDAY_SHORT, dayKey, formatDayKey, formatTime, monthKey, parseDayKey, todayKey } from '@/utils/format'
 import { haptic } from '@/utils/haptic'
 import { renderNoteHtml } from '@/utils/richText'
+import { getSystemInsets } from '@/utils/systemInsets'
+import { prefersReducedMotion } from '@/utils/spring'
 
 const { themeName, themeClass, isDark } = usePageTheme()
 const auth = useAuthStore()
 const store = useNotesStore()
 const storage = useStorageModeStore()
+const { top: statusInset, bottom: safeBottom } = getSystemInsets()
 
 const STRIP_DAYS = 21
 const SEARCH_DEBOUNCE = 280
@@ -43,12 +46,21 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 // #ifdef H5
 let titleObserver: IntersectionObserver | null = null
+let stripObserver: ResizeObserver | null = null
 
 async function observeHeroTitle() {
   titleObserver?.disconnect()
   titleObserver = null
+  stripObserver?.disconnect()
+  stripObserver = null
   await nextTick()
-  if (searchOpen.value || typeof IntersectionObserver === 'undefined') return
+  if (searchOpen.value) return
+  const strip = document.querySelector('.tl-strip__scroll')
+  if (strip && typeof ResizeObserver !== 'undefined') {
+    stripObserver = new ResizeObserver(() => { void alignDateStrip() })
+    stripObserver.observe(strip)
+  }
+  if (typeof IntersectionObserver === 'undefined') return
   const title = document.querySelector('.tl-hero__title')
   const nav = document.querySelector('.tl-nav')
   if (!title || !nav) return
@@ -128,7 +140,22 @@ const stripDays = computed<StripDay[]>(() => {
   }
   return list
 })
-const stripAnchor = computed(() => `strip-${store.selectedDay || today}`)
+const stripAnchor = ref('')
+
+async function alignDateStrip() {
+  // Uni scroll-view resets scroll-left on its first tick. Position afterwards,
+  // including when reduced motion disables its animated scroll path.
+  stripAnchor.value = ''
+  await nextTick()
+  const selected = stripDays.value.some(item => item.key === store.selectedDay) ? store.selectedDay : today
+  stripAnchor.value = `strip-${selected}`
+}
+
+onMounted(() => { void alignDateStrip() })
+onResize(() => { void alignDateStrip() })
+watch([() => store.selectedDay, searchOpen], () => {
+  if (!searchOpen.value) void alignDateStrip()
+})
 
 const showSkeleton = computed(() => store.activeLoading && store.activeNotes.length === 0)
 const showError = computed(() => Boolean(store.activeError) && store.activeNotes.length === 0)
@@ -189,10 +216,14 @@ onUnload(() => {
   if (searchTimer) clearTimeout(searchTimer)
   // #ifdef H5
   titleObserver?.disconnect()
+  stripObserver?.disconnect()
   // #endif
 })
 
 onPageScroll(({ scrollTop }) => {
+  // #ifdef H5
+  if (titleObserver) return
+  // #endif
   const next = scrollTop > 24
   if (next !== scrolled.value) scrolled.value = next
 })
@@ -275,7 +306,7 @@ function clearSearchKeyword() {
 function clearFilters() {
   if (searchOpen.value) closeSearch()
   void store.selectDay('')
-  uni.pageScrollTo({ scrollTop: 0, duration: 300 })
+  uni.pageScrollTo({ scrollTop: 0, duration: prefersReducedMotion() ? 0 : 300 })
 }
 
 function retry() {
@@ -289,7 +320,7 @@ function retry() {
 function onSelectDay(day: string) {
   if (searchOpen.value) closeSearch()
   void store.selectDay(day).catch(() => {})
-  uni.pageScrollTo({ scrollTop: 0, duration: 300 })
+  uni.pageScrollTo({ scrollTop: 0, duration: prefersReducedMotion() ? 0 : 300 })
 }
 
 function onStripPick(item: StripDay) {
@@ -360,6 +391,7 @@ function previewNoteImage(note: Note, index: number) {
     <view
       class="page tl-page"
       :class="[themeClass, { 'note-dark': isDark, 'tl-page--search': searchOpen }]"
+      :style="{ '--note-safe-bottom': `${safeBottom}px`, '--note-status-inset': `${statusInset}px` }"
     >
       <view class="tl-nav note-material--thick" :class="{ 'tl-nav--edge': scrolled || searchOpen }">
         <text class="tl-nav__title" :class="{ 'tl-nav__title--on': scrolled || searchOpen }">
@@ -396,6 +428,7 @@ function previewNoteImage(note: Note, index: number) {
             class="note-field__input"
             :focus="searchFocus"
             placeholder="搜索笔记内容"
+            aria-label="搜索笔记内容"
             placeholder-class="note-field__placeholder"
             confirm-type="search"
             @confirm="submitSearch"
@@ -436,7 +469,7 @@ function previewNoteImage(note: Note, index: number) {
             scroll-x
             :show-scrollbar="false"
             :scroll-into-view="stripAnchor"
-            scroll-with-animation
+            :scroll-with-animation="!prefersReducedMotion()"
           >
             <view class="tl-strip__track">
               <button
@@ -628,29 +661,31 @@ function previewNoteImage(note: Note, index: number) {
 
 <style scoped lang="scss">
 .tl-page {
-  --tl-nav-h: calc(88rpx + env(safe-area-inset-top));
+  --tl-header-h: calc(44px + var(--note-inset-top));
+  --tl-nav-h: var(--tl-header-h);
   --tl-rail-x: 28rpx;
+  --tl-gutter: max(32rpx, 16px);
 
-  padding-bottom: calc(var(--note-tabbar-height) + 40rpx);
+  padding-bottom: calc(var(--note-tabbar-height) + var(--note-inset-bottom) + 40rpx);
   background: var(--note-bg);
 }
 
 .tl-page--search {
-  --tl-nav-h: calc(184rpx + env(safe-area-inset-top));
+  --tl-nav-h: calc(var(--tl-header-h) + max(112rpx, 56px));
 }
 
 .tl-nav {
   position: fixed;
   top: 0;
-  left: 0;
-  right: 0;
+  left: var(--note-inset-left);
+  right: var(--note-inset-right);
   z-index: 30;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16rpx;
-  height: var(--tl-nav-h);
-  padding: env(safe-area-inset-top) 16rpx 0 32rpx;
+  height: var(--tl-header-h);
+  padding: var(--note-inset-top) 16rpx 0 var(--tl-gutter);
 }
 
 /* 滚动边缘效果：内容压到导航下方时才出现分隔线。 */
@@ -738,22 +773,23 @@ function previewNoteImage(note: Note, index: number) {
 
 .tl-searchbar {
   position: fixed;
-  top: calc(88rpx + env(safe-area-inset-top));
-  left: 0;
-  right: 0;
+  top: var(--tl-header-h);
+  left: var(--note-inset-left);
+  right: var(--note-inset-right);
   z-index: 30;
   display: flex;
   align-items: center;
   gap: 12rpx;
-  height: 96rpx;
-  padding: 0 24rpx 12rpx;
+  height: max(112rpx, 56px);
+  padding: 0 var(--tl-gutter) 12rpx;
 }
 
 .tl-searchbar__field {
   flex: 1;
   min-width: 0;
-  height: 72rpx;
-  min-height: 72rpx;
+  height: 44px;
+  min-height: 44px;
+  padding-right: 0;
   background: var(--note-fill);
 }
 
@@ -762,17 +798,31 @@ function previewNoteImage(note: Note, index: number) {
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 44rpx;
-  height: 44rpx;
+  position: relative;
+  width: 44px;
+  height: 44px;
   margin: 0;
   padding: 0;
   border: 0;
   border-radius: 50%;
   color: var(--note-surface);
+  background: transparent;
+  z-index: 0;
+}
+
+.tl-searchbar__clear::before {
+  content: '';
+  position: absolute;
+  inset: 12px;
+  z-index: -1;
+  border-radius: 50%;
   background: var(--note-text-3);
 }
 
 .tl-searchbar__cancel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
   height: 72rpx;
   min-height: 44px;
@@ -794,14 +844,14 @@ function previewNoteImage(note: Note, index: number) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 28rpx 40rpx 36rpx;
+  padding: 32rpx var(--tl-gutter) 36rpx;
   background: radial-gradient(ellipse at 100% 0%, rgba(var(--note-accent-rgb), 0.1), transparent 70%);
 }
 
 .tl-hero__year {
   position: absolute;
   right: 16rpx;
-  top: -8rpx;
+  top: 8rpx;
   color: var(--note-accent);
   opacity: 0.08;
   font-size: 170rpx;
@@ -817,6 +867,7 @@ function previewNoteImage(note: Note, index: number) {
 .tl-hero__meta {
   position: relative;
 }
+
 
 .tl-hero__eyebrow {
   color: var(--note-accent);
@@ -847,7 +898,7 @@ function previewNoteImage(note: Note, index: number) {
   display: flex;
   align-items: stretch;
   gap: 12rpx;
-  padding: 0 24rpx 28rpx 40rpx;
+  padding: 0 var(--tl-gutter) 24rpx;
 }
 
 .tl-strip__all {
@@ -876,8 +927,9 @@ function previewNoteImage(note: Note, index: number) {
 }
 
 .tl-strip__all-text {
-  font-size: var(--note-font-min);
+  font-size: var(--note-font-caption);
   font-weight: 600;
+  line-height: 1.2;
 }
 
 .tl-strip__scroll {
@@ -919,8 +971,9 @@ function previewNoteImage(note: Note, index: number) {
 
 .tl-strip__weekday {
   color: var(--note-text-3);
-  font-size: var(--note-font-min);
+  font-size: var(--note-font-caption);
   font-weight: 600;
+  line-height: 1.2;
 }
 
 .tl-strip__day--weekend .tl-strip__weekday {
@@ -930,7 +983,7 @@ function previewNoteImage(note: Note, index: number) {
 
 .tl-strip__num {
   color: var(--note-text);
-  font-size: var(--note-font-body);
+  font-size: var(--note-font-title3);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
@@ -976,8 +1029,8 @@ function previewNoteImage(note: Note, index: number) {
   display: flex;
   align-items: center;
   gap: 10rpx;
-  height: 68rpx;
-  margin: 0 32rpx 20rpx;
+  min-height: 44px;
+  margin: 0 var(--tl-gutter) 20rpx;
   padding: 0 8rpx 0 20rpx;
   border-radius: 999rpx;
   background: var(--note-accent-soft);
@@ -1027,7 +1080,7 @@ function previewNoteImage(note: Note, index: number) {
   display: flex;
   align-items: baseline;
   gap: 12rpx;
-  padding: 18rpx 40rpx;
+  padding: 18rpx var(--tl-gutter);
 }
 
 .tl-day__label {
@@ -1057,7 +1110,7 @@ function previewNoteImage(note: Note, index: number) {
 
 .tl-day__list {
   position: relative;
-  padding: 16rpx 40rpx 12rpx;
+  padding: 16rpx var(--tl-gutter) 12rpx;
 }
 
 /* 连续轨道线，把一天里的记录串成一条时间轴。 */
@@ -1066,7 +1119,7 @@ function previewNoteImage(note: Note, index: number) {
   position: absolute;
   top: 24rpx;
   bottom: 24rpx;
-  left: calc(40rpx + var(--tl-rail-x));
+  left: calc(var(--tl-gutter) + var(--tl-rail-x));
   width: 2rpx;
   transform: translateX(-50%);
   border-radius: 2rpx;
@@ -1177,10 +1230,12 @@ function previewNoteImage(note: Note, index: number) {
 }
 
 .tl-card__tag {
-  height: 40rpx;
-  padding: 0 14rpx;
+  min-height: 24px;
+  height: auto;
+  padding: 2px 8px;
   color: var(--note-accent);
   background: var(--note-accent-soft);
+  line-height: 1.2;
 }
 
 .tl-media {
@@ -1231,7 +1286,7 @@ function previewNoteImage(note: Note, index: number) {
 }
 
 .tl-skeleton {
-  padding: 24rpx 32rpx;
+  padding: 24rpx var(--tl-gutter);
 }
 
 .tl-skeleton__row {

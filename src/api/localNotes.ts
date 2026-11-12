@@ -44,6 +44,10 @@ function sortedRows(rows = readRows()) {
   return [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
 }
 
+export function getAllLocalNotes() {
+  return sortedRows()
+}
+
 export function listLocalNotes(options: { before?: string; keyword?: string } = {}): NoteListResult {
   const keyword = options.keyword?.trim().toLocaleLowerCase() || ''
   const rows = sortedRows().filter((note) => {
@@ -68,7 +72,7 @@ export function countLocalNotesByDay(range: { from: string; to: string }): Recor
 }
 
 export function createLocalNote(draft: NoteDraft): Note {
-  const now = new Date().toISOString()
+  const now = draft.createdAt || new Date().toISOString()
   const note: Note = {
     id: `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`,
     userId: 'local-device',
@@ -96,6 +100,7 @@ export function updateLocalNote(id: string, draft: NoteDraft): Note {
     mood: draft.mood || 'calm',
     images: [...draft.images],
     tags: [...draft.tags],
+    createdAt: draft.createdAt || previous.createdAt,
     updatedAt: new Date().toISOString()
   }
   rows[index] = note

@@ -31,7 +31,7 @@ export async function createNote(token: string, draft: NoteDraft): Promise<Note>
   const rows = await request<unknown[]>(restPath('notes'), {
     method: 'POST',
     token,
-    body: { content: draft.content, mood: draft.mood, images: draft.images, tags: draft.tags },
+    body: { content: draft.content, mood: draft.mood, images: draft.images, tags: draft.tags, ...(draft.createdAt ? { created_at: draft.createdAt } : {}) },
     headers: { Prefer: 'return=representation' }
   })
   const note = keysToCamel<Note[]>(rows)[0]
@@ -43,7 +43,7 @@ export async function updateNote(token: string, id: string, draft: NoteDraft): P
   const rows = await request<unknown[]>(restPath('notes', buildQuery({ id: `eq.${id}` })), {
     method: 'PATCH',
     token,
-    body: { content: draft.content, mood: draft.mood, images: draft.images, tags: draft.tags },
+    body: { content: draft.content, mood: draft.mood, images: draft.images, tags: draft.tags, ...(draft.createdAt ? { created_at: draft.createdAt } : {}) },
     headers: { Prefer: 'return=representation' }
   })
   const note = keysToCamel<Note[]>(rows)[0]

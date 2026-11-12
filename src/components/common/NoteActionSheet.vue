@@ -67,7 +67,7 @@ function select(value: string) {
   width: 100%;
   min-height: 60px;
   margin: 0;
-  padding: 0 18rpx;
+  padding: 16rpx 20rpx;
   border: 1rpx solid var(--note-separator);
   border-radius: var(--note-radius-md);
   color: var(--note-text);
@@ -95,8 +95,8 @@ function select(value: string) {
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--note-radius-sm);
   color: var(--note-accent);
   background: var(--note-accent-soft);
@@ -105,7 +105,7 @@ function select(value: string) {
 .note-action-sheet__label {
   flex: 1;
   min-width: 0;
-  font-size: var(--note-font-body);
+  font-size: var(--note-font-subhead);
   font-weight: 600;
   line-height: 1.3;
 }

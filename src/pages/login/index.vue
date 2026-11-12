@@ -7,6 +7,7 @@ import { usePageTheme } from '@/composables/usePageTheme'
 import { useAuthStore } from '@/stores/auth'
 import { useNotesStore } from '@/stores/notes'
 import { useStorageModeStore } from '@/stores/storageMode'
+import { getSystemInsets } from '@/utils/systemInsets'
 
 const REMEMBERED_CREDENTIALS_KEY = 'note-login-credentials'
 
@@ -19,6 +20,7 @@ const { themeName, themeClass, isDark } = usePageTheme()
 const auth = useAuthStore()
 const notes = useNotesStore()
 const storage = useStorageModeStore()
+const { top: statusInset, bottom: safeBottom } = getSystemInsets()
 
 const account = ref('')
 const password = ref('')
@@ -58,12 +60,34 @@ function restoreCredentials() {
 onLoad(async () => {
   await storage.initialize()
   storage.hydrate()
-  if (storage.mode === 'local' || auth.isLoggedIn) {
+  if (storage.mode === 'local') {
     uni.reLaunch({ url: '/pages/timeline/index' })
     return
   }
+  if (auth.isLoggedIn) {
+    const valid = await auth.ensureValidSession(false)
+    if (valid) {
+      try {
+        await finishCloudEntry()
+        return
+      } catch (entryError) {
+        error.value = getUserFacingErrorMessage(entryError, '本机记录导入失败，可检查网络后重试')
+      }
+    }
+  }
   restoreCredentials()
 })
+
+async function finishCloudEntry() {
+  if (uni.getStorageSync('note-pending-local-import') === 'yes') {
+    const imported = await notes.importLocalToCloud(auth.token, auth.user?.id || '')
+    uni.removeStorageSync('note-pending-local-import')
+    uni.showToast({ title: `已导入 ${imported} 条本机记录`, icon: 'success' })
+  } else {
+    uni.removeStorageSync('note-pending-local-import')
+  }
+  uni.reLaunch({ url: '/pages/timeline/index' })
+}
 
 function persistCredentials(acc: string, secret: string) {
   uni.setStorageSync('note-account', acc)
@@ -97,7 +121,7 @@ async function submit() {
   try {
     await auth.login(acc, password.value)
     persistCredentials(acc, password.value)
-    uni.reLaunch({ url: '/pages/timeline/index' })
+    await finishCloudEntry()
   } catch (loginError) {
     error.value = getUserFacingErrorMessage(loginError, '登录失败，请稍后重试')
   } finally {
@@ -117,7 +141,7 @@ async function onWechatPhone(event: { detail?: { code?: string } }) {
   loading.value = true
   try {
     await auth.loginWithWechatPhone(code)
-    uni.reLaunch({ url: '/pages/timeline/index' })
+    await finishCloudEntry()
   } catch (loginError) {
     error.value = getUserFacingErrorMessage(loginError, '微信登录失败，请稍后重试')
   } finally {
@@ -129,7 +153,7 @@ async function onWechatPhone(event: { detail?: { code?: string } }) {
 
 <template>
   <wd-config-provider :theme="themeName">
-    <view class="page login-page" :class="[themeClass, { 'note-dark': isDark }]">
+    <view class="page login-page" :class="[themeClass, { 'note-dark': isDark }]" :style="{ '--note-status-inset': `${statusInset}px`, '--note-safe-bottom': `${safeBottom}px` }">
       <view class="login-decoration" aria-hidden="true" />
       <view class="login-shell">
         <view class="login-header">
@@ -261,7 +285,7 @@ async function onWechatPhone(event: { detail?: { code?: string } }) {
   position: relative;
   display: flex;
   justify-content: center;
-  padding: calc(72rpx + env(safe-area-inset-top)) 40rpx calc(48rpx + env(safe-area-inset-bottom));
+  padding: calc(48rpx + var(--note-inset-top)) calc(32rpx + var(--note-inset-right)) calc(48rpx + var(--note-inset-bottom)) calc(32rpx + var(--note-inset-left));
   overflow-x: hidden;
   background: var(--note-bg);
 }
@@ -300,6 +324,11 @@ async function onWechatPhone(event: { detail?: { code?: string } }) {
   color: var(--note-accent);
   text-align: left;
   gap: 20rpx;
+  transition: background-color var(--note-duration-fast) var(--note-ease);
+}
+
+.login-local::after {
+  border: 0;
 }
 
 .login-local:active {
@@ -321,8 +350,9 @@ async function onWechatPhone(event: { detail?: { code?: string } }) {
 }
 
 .login-local__desc {
-  color: var(--note-text-secondary);
+  color: var(--note-text-2);
   font-size: var(--note-font-caption);
+  line-height: 1.5;
 }
 
 .login-header {
@@ -442,7 +472,9 @@ async function onWechatPhone(event: { detail?: { code?: string } }) {
 
 .login-remember-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 4rpx 16rpx;
   width: 100%;
   min-height: 72rpx;
   margin: 20rpx 0 0;
@@ -455,7 +487,9 @@ async function onWechatPhone(event: { detail?: { code?: string } }) {
 }
 
 :deep(.login-remember-control) {
-  min-height: 56rpx;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   color: var(--note-text-2);
   font-size: var(--note-font-footnote);
 }
@@ -529,6 +563,24 @@ async function onWechatPhone(event: { detail?: { code?: string } }) {
 @media (min-width: 700px) {
   .login-page {
     align-items: center;
+  }
+}
+
+@media (max-height: 600px) and (orientation: landscape) {
+  .login-header {
+    padding-top: 0;
+  }
+
+  .login-mark {
+    display: none;
+  }
+
+  .login-eyebrow {
+    margin-top: 0;
+  }
+
+  .login-form {
+    margin-top: 24rpx;
   }
 }
 

@@ -1,5 +1,5 @@
 import { ApiRequestError, SUPABASE_KEY, SUPABASE_URL, removeStorageObjects, request } from './supabase'
-import { removeLocalNoteImages, saveLocalNoteImage } from './localNoteImages'
+import { removeLocalNoteImages, resolveLocalNoteImage, saveLocalNoteImage } from './localNoteImages'
 import { isLocalStorageMode } from '@/utils/storageMode'
 
 export const NOTE_IMAGE_BUCKET = 'note-images'
@@ -94,6 +94,27 @@ export function uploadNoteImage(
 
   const objectPath = `${userId}/${uniqueObjectName(filePath)}`
   const url = `${SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${NOTE_IMAGE_BUCKET}/${objectPath}`
+
+  // H5 本机图片存于 IndexedDB；迁移时从 Blob URL 读取并直接上传。
+  // #ifdef H5
+  if (filePath.startsWith('note-local-image://')) {
+    return resolveLocalNoteImage(filePath)
+      .then((localUrl) => fetch(localUrl))
+      .then((response) => {
+        if (!response.ok) throw new Error('读取本机图片失败')
+        return response.blob()
+      })
+      .then(async (blob) => {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}`, 'x-upsert': 'true' },
+          body: blob
+        })
+        if (!response.ok) throw new Error('图片上传失败，请检查网络后重试')
+        return objectPath
+      })
+  }
+  // #endif
 
   return new Promise((resolve, reject) => {
     const task = uni.uploadFile({
