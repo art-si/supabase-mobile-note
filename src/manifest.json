@@ -23,6 +23,10 @@
       "minified": true
     },
     "usingComponents": true,
+    "permission": {
+      "scope.userLocation": { "desc": "根据当前位置展示当天的天气和温度" }
+    },
+    "requiredPrivateInfos": ["getLocation"],
     "darkmode": true
   }
 }

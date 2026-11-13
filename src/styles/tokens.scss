@@ -1,22 +1,22 @@
 // Apple HIG semantic tokens. Light values on systemGroupedBackground, dark on pure black.
 @mixin light {
-  --note-bg: #f5f7fb;
+  --note-bg: #f2f2f7;
   --note-surface: #ffffff;
-  --note-surface-2: #eef2f8;
+  --note-surface-2: #f2f2f7;
   --note-fill: rgba(95, 110, 135, 0.1);
   --note-fill-2: rgba(95, 110, 135, 0.06);
-  --note-text: #172033;
-  --note-text-2: #5c667a;
-  --note-text-3: #707b8e;
+  --note-text: #1c1c1e;
+  --note-text-2: #62626a;
+  --note-text-3: #73737c;
   --note-separator: rgba(48, 62, 85, 0.12);
   --note-separator-strong: rgba(48, 62, 85, 0.22);
   --note-material: rgba(255, 255, 255, 0.72);
   --note-material-thick: rgba(250, 251, 253, 0.88);
   --note-scrim: rgba(16, 24, 40, 0.32);
-  --note-danger: #ff3b30;
+  --note-danger: #d70015;
   --note-danger-soft: rgba(255, 59, 48, 0.12);
   --note-success: #34c759;
-  --note-warning: #ff9500;
+  --note-warning: #9f5600;
   --note-mood-calm: #30b0c7;
   --note-mood-happy: #ff9500;
   --note-mood-focused: #007aff;

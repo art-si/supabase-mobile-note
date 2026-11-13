@@ -48,6 +48,14 @@ export function getAllLocalNotes() {
   return sortedRows()
 }
 
+export function saveLocalBackup(note: Note, previous?: Note): boolean {
+  const rows = readRows()
+  const current = rows.find(row => row.id === note.id)
+  if (current ? !previous || current.updatedAt !== previous.updatedAt : Boolean(previous)) return false
+  writeRows([{ ...note, userId: 'local-device', backupSourceUpdatedAt: note.updatedAt }, ...rows.filter(row => row.id !== note.id)])
+  return true
+}
+
 export function listLocalNotes(options: { before?: string; keyword?: string } = {}): NoteListResult {
   const keyword = options.keyword?.trim().toLocaleLowerCase() || ''
   const rows = sortedRows().filter((note) => {

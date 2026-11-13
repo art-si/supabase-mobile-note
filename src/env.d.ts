@@ -8,6 +8,11 @@ declare module '*.vue' {
 
 declare module '*.scss'
 
+declare module '*.svg' {
+  const url: string
+  export default url
+}
+
 interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL: string
   readonly VITE_SUPABASE_MP_URL?: string

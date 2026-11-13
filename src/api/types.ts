@@ -27,6 +27,8 @@ export interface Note {
   tags: string[]
   createdAt: string
   updatedAt: string
+  /** Revision of the cloud snapshot last copied to this device. */
+  backupSourceUpdatedAt?: string
 }
 
 export interface NoteDraft {

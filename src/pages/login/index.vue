@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import NoteIcon from '@/components/common/NoteIcon.vue'
 import { getUserFacingErrorMessage } from '@/api/supabase'
 import { usePageTheme } from '@/composables/usePageTheme'
-import { useAuthStore } from '@/stores/auth'
-import { useNotesStore } from '@/stores/notes'
+import { CLOUD_ACCESS_DENIED, useAuthStore } from '@/stores/auth'
+import { useNotesStore, type LocalImportProgress } from '@/stores/notes'
 import { useStorageModeStore } from '@/stores/storageMode'
 import { getSystemInsets } from '@/utils/systemInsets'
+// #ifdef H5
+import brandMarkAsset from '@/static/favicon.svg'
+// #endif
+let brandMark = '/static/favicon.svg'
+// #ifdef H5
+brandMark = brandMarkAsset
+// #endif
 
 const REMEMBERED_CREDENTIALS_KEY = 'note-login-credentials'
 
@@ -27,6 +34,21 @@ const password = ref('')
 const rememberPassword = ref(false)
 const loading = ref(false)
 const error = ref('')
+const closed = computed(() => !storage.loading && !storage.configError && !storage.cloudAvailable)
+const invalidField = ref<'account' | 'password' | ''>('')
+const focusedField = ref<'account' | 'password' | ''>('')
+const stage = ref<'login' | 'import'>('login')
+const importing = computed(() => stage.value === 'import')
+const importProgress = ref<LocalImportProgress | null>(null)
+const importFailed = ref(false)
+const buttonLabel = computed(() => loading.value ? stage.value === 'import' ? '正在导入…' : '正在登录…' : importFailed.value ? '继续导入' : '登录云端')
+const importPercent = computed(() => importProgress.value?.total ? importProgress.value.completed / importProgress.value.total * 100 : 0)
+const importDetail = computed(() => {
+  const progress = importProgress.value
+  if (!progress) return '正在读取本机记录…'
+  return `已保存 ${progress.completed} / ${progress.total} 条记录`
+})
+watch([account, password], () => { if (invalidField.value) { invalidField.value = ''; error.value = '' } })
 
 function parseCredentials(value: unknown): RememberedCredentials | null {
   let candidate = value
@@ -58,31 +80,47 @@ function restoreCredentials() {
 }
 
 onLoad(async () => {
-  await storage.initialize()
-  storage.hydrate()
-  if (storage.mode === 'local') {
-    uni.reLaunch({ url: '/pages/timeline/index' })
-    return
-  }
-  if (auth.isLoggedIn) {
-    const valid = await auth.ensureValidSession(false)
-    if (valid) {
-      try {
-        await finishCloudEntry()
-        return
-      } catch (entryError) {
-        error.value = getUserFacingErrorMessage(entryError, '本机记录导入失败，可检查网络后重试')
+  loading.value = true
+  try {
+    await storage.initialize()
+    storage.hydrate()
+    if (storage.mode === 'local') {
+      uni.reLaunch({ url: '/pages/timeline/index' })
+      return
+    }
+    if (closed.value) {
+      error.value = '云端存储暂未开放，你可以继续使用本机存储。'
+      return
+    }
+    auth.hydrate()
+    if (auth.isLoggedIn) {
+      const valid = await auth.ensureValidSession(false)
+      if (valid) {
+        try {
+          await finishCloudEntry()
+          return
+        } catch (entryError) {
+          importFailed.value = importing.value && !auth.cloudAccessDenied && auth.isLoggedIn
+          error.value = getUserFacingErrorMessage(entryError, '暂时无法进入云端，请重试')
+        }
       }
     }
+    restoreCredentials()
+  } finally {
+    loading.value = false
   }
-  restoreCredentials()
 })
 
 async function finishCloudEntry() {
+  await auth.requireCloudAccess()
   if (uni.getStorageSync('note-pending-local-import') === 'yes') {
-    const imported = await notes.importLocalToCloud(auth.token, auth.user?.id || '')
+    stage.value = 'import'
+    const result = await notes.importLocalToCloud(auth.token, auth.user?.id || '', progress => { importProgress.value = progress })
     uni.removeStorageSync('note-pending-local-import')
-    uni.showToast({ title: `已导入 ${imported} 条本机记录`, icon: 'success' })
+    const message = !result.total ? '当前设备没有可导入的本机记录' : result.added
+      ? `已新增 ${result.added} 条，云端已有 ${result.existing} 条`
+      : `已核对，${result.existing} 条记录均已在云端`
+    uni.showToast({ title: message, icon: 'none', duration: 3500 })
   } else {
     uni.removeStorageSync('note-pending-local-import')
   }
@@ -102,27 +140,41 @@ function startLocalMode() {
   notes.reset()
   auth.clearSession(false)
   storage.setMode('local')
+  uni.removeStorageSync('note-pending-local-import')
   uni.reLaunch({ url: '/pages/timeline/index' })
 }
 
 async function submit() {
-  if (loading.value) return
+  if (loading.value || closed.value) return
   error.value = ''
+  invalidField.value = ''
+  const continuing = importFailed.value && auth.isLoggedIn
   const acc = account.value.trim()
-  if (!acc) {
+  if (!continuing && !acc) {
+    invalidField.value = 'account'
+    focusedField.value = 'account'
     error.value = '请输入邮箱或手机号'
     return
   }
-  if (!password.value) {
+  if (!continuing && !password.value) {
+    invalidField.value = 'password'
+    focusedField.value = 'password'
     error.value = '请输入密码'
     return
   }
   loading.value = true
+  stage.value = 'login'
   try {
-    await auth.login(acc, password.value)
-    persistCredentials(acc, password.value)
+    if (continuing) {
+      if (!await auth.ensureValidSession(false)) throw new Error('登录已过期，请重新登录后继续导入')
+    } else {
+      await auth.login(acc, password.value)
+      persistCredentials(acc, password.value)
+    }
     await finishCloudEntry()
   } catch (loginError) {
+    importFailed.value = importing.value && !auth.cloudAccessDenied && auth.isLoggedIn
+    if (loginError instanceof Error && loginError.message === CLOUD_ACCESS_DENIED) stage.value = 'login'
     error.value = getUserFacingErrorMessage(loginError, '登录失败，请稍后重试')
   } finally {
     loading.value = false
@@ -136,13 +188,14 @@ async function onWechatPhone(event: { detail?: { code?: string } }) {
     error.value = '已取消微信授权'
     return
   }
-  if (loading.value) return
+  if (loading.value || closed.value) return
   error.value = ''
   loading.value = true
   try {
     await auth.loginWithWechatPhone(code)
     await finishCloudEntry()
   } catch (loginError) {
+    if (auth.cloudAccessDenied) stage.value = 'login'
     error.value = getUserFacingErrorMessage(loginError, '微信登录失败，请稍后重试')
   } finally {
     loading.value = false
@@ -154,127 +207,57 @@ async function onWechatPhone(event: { detail?: { code?: string } }) {
 <template>
   <wd-config-provider :theme="themeName">
     <view class="page login-page" :class="[themeClass, { 'note-dark': isDark }]" :style="{ '--note-status-inset': `${statusInset}px`, '--note-safe-bottom': `${safeBottom}px` }">
-      <view class="login-decoration" aria-hidden="true" />
       <view class="login-shell">
         <view class="login-header">
-          <view class="login-mark" aria-hidden="true">
-            <view class="login-mark__rail" />
-            <view class="login-mark__dot login-mark__dot--1" />
-            <view class="login-mark__dot login-mark__dot--2" />
-            <view class="login-mark__dot login-mark__dot--3" />
+          <view class="login-brand">
+            <image class="login-mark" :src="brandMark" mode="aspectFit" aria-hidden="true" />
+            <text class="login-brand__name">时光记事</text>
           </view>
-          <text class="login-eyebrow">时光记事</text>
-          <text class="login-title">欢迎回来</text>
-          <text class="login-tagline">记录当下，也留住以后想起的此刻。</text>
+          <text class="login-title">登录云端</text>
+          <text class="login-tagline">在不同设备上，继续你的记录。</text>
         </view>
-
-        <view class="login-form note-card">
+        <view class="login-form">
           <view class="login-field-group">
             <text class="login-field-label">账号</text>
-            <view class="login-input-shell">
-              <wd-input
-                v-model="account"
-                custom-class="login-input-control"
-                type="text"
-                placeholder="邮箱或手机号"
-                placeholder-class="login-input-placeholder"
-                aria-label="邮箱或手机号"
-                autocomplete="username"
-                inputmode="email"
-                clearable
-                :disabled="loading"
-                @confirm="submit"
-              >
-                <template #prefix>
-                  <NoteIcon name="mail" size="36rpx" />
-                </template>
+            <view class="login-input-shell" :class="{ 'login-input-shell--error': invalidField === 'account' }">
+              <wd-input v-model="account" custom-class="login-input-control" type="text" placeholder="邮箱或手机号" aria-label="邮箱或手机号" autocomplete="username" clearable :focus="focusedField === 'account'" :disabled="loading" @focus="focusedField = 'account'" @blur="focusedField = ''" @confirm="focusedField = 'password'">
+                <template #prefix><NoteIcon name="mail" size="36rpx" /></template>
               </wd-input>
             </view>
+            <text v-if="invalidField === 'account'" class="login-error" role="alert">{{ error }}</text>
           </view>
-
-          <view class="login-field-group login-password">
+          <view class="login-field-group">
             <text class="login-field-label">密码</text>
-            <view class="login-input-shell">
-              <wd-input
-                v-model="password"
-                custom-class="login-input-control"
-                type="safe-password"
-                placeholder="请输入密码"
-                placeholder-class="login-input-placeholder"
-                aria-label="密码"
-                autocomplete="current-password"
-                confirm-type="done"
-                show-password
-                clearable
-                :disabled="loading"
-                @confirm="submit"
-              >
-                <template #prefix>
-                  <NoteIcon name="lock" size="36rpx" />
-                </template>
+            <view class="login-input-shell" :class="{ 'login-input-shell--error': invalidField === 'password' }">
+              <wd-input v-model="password" custom-class="login-input-control" type="safe-password" placeholder="请输入密码" aria-label="密码" autocomplete="current-password" confirm-type="done" show-password :focus="focusedField === 'password'" :disabled="loading" @focus="focusedField = 'password'" @blur="focusedField = ''" @confirm="submit">
+                <template #prefix><NoteIcon name="lock" size="36rpx" /></template>
               </wd-input>
             </view>
+            <text v-if="invalidField === 'password'" class="login-error" role="alert">{{ error }}</text>
           </view>
-
           <view class="login-remember-row">
-            <wd-checkbox
-              v-model="rememberPassword"
-              class="login-remember-control"
-              type="square"
-              checked-color="var(--note-accent)"
-              :disabled="loading"
-            >
-              记住密码
-            </wd-checkbox>
-            <text class="login-remember__hint">仅保存在此设备</text>
+            <wd-checkbox v-model="rememberPassword" class="login-remember-control" type="square" checked-color="var(--note-accent)" :disabled="loading">记住密码</wd-checkbox>
+            <text class="login-remember__hint">仅在这台设备</text>
           </view>
-
-          <text v-if="error" class="login-error" role="alert">{{ error }}</text>
-
-          <wd-button
-            type="primary"
-            size="large"
-            block
-            class="login-submit"
-            :disabled="loading"
-            :loading="loading"
-            @click="submit"
-          >
-            {{ loading ? '登录中…' : '登录' }}
-          </wd-button>
-
-          <button class="login-local" :disabled="loading" @tap="startLocalMode">
-            <NoteIcon name="phone" size="38rpx" />
-            <view class="login-local__copy">
-              <text class="login-local__title">使用本机存储</text>
-              <text class="login-local__desc">无需登录，记录只保存在这台设备</text>
+          <view v-if="stage === 'import'" class="login-import" :aria-busy="loading">
+            <text class="login-import__title" role="status" aria-live="polite">{{ importFailed ? '导入已暂停' : importProgress?.phase === 'checking' ? '已登录，正在核对云端记录' : importProgress?.phase === 'complete' ? '导入完成' : '已登录，正在导入本机记录' }}</text>
+            <view class="login-import__track" role="progressbar" aria-label="本机笔记导入进度" :aria-valuenow="importProgress?.completed || 0" :aria-valuemax="importProgress?.total || 1" aria-valuemin="0">
+              <view class="login-import__fill" :style="{ transform: `scaleX(${importPercent / 100})` }" />
             </view>
-            <NoteIcon name="chevron-right" size="32rpx" />
-          </button>
-
-          <!-- #ifdef MP-WEIXIN -->
-          <view class="login-divider" aria-hidden="true">
-            <view class="login-divider__line" />
-            <text class="login-divider__text">其他方式</text>
-            <view class="login-divider__line" />
+            <text class="login-import__detail">{{ importDetail }}</text>
+            <text v-if="importProgress?.phase === 'image'" class="login-import__detail">
+              第 {{ importProgress.completed + 1 }} 条 · 图片 {{ importProgress.imageIndex }}/{{ importProgress.imageTotal }} · 上传 {{ importProgress.imagePercent }}%
+            </text>
+            <text class="login-import__hint">本机原始记录会保留，已完成的记录不会重复导入。</text>
           </view>
-          <wd-button
-            type="primary"
-            variant="soft"
-            size="large"
-            block
-            class="login-wechat"
-            :disabled="loading"
-            open-type="getPhoneNumber"
-            @getphonenumber="onWechatPhone"
-          >
-            <NoteIcon name="wechat" size="36rpx" />
-            微信手机号登录
-          </wd-button>
+          <text v-if="error && !invalidField" class="login-error" role="alert">{{ error }}</text>
+          <wd-button type="primary" size="large" block class="login-submit" :disabled="loading || closed" :loading="loading" @click="submit">{{ buttonLabel }}</wd-button>
+          <!-- #ifdef MP-WEIXIN -->
+          <wd-button type="primary" variant="soft" size="large" block class="login-wechat" :disabled="loading || closed" open-type="getPhoneNumber" @getphonenumber="onWechatPhone"><NoteIcon name="wechat" size="36rpx" />微信手机号登录</wd-button>
           <!-- #endif -->
+          <button class="login-local" :disabled="loading" @tap="startLocalMode">暂不登录，使用本机</button>
+          <text class="login-hint">本机笔记只保存在当前设备</text>
         </view>
-
-        <text class="login-hint">云端笔记使用邮箱或手机号登录；本机存储无需账号</text>
       </view>
     </view>
   </wd-config-provider>
@@ -282,306 +265,203 @@ async function onWechatPhone(event: { detail?: { code?: string } }) {
 
 <style scoped lang="scss">
 .login-page {
-  position: relative;
   display: flex;
   justify-content: center;
-  padding: calc(48rpx + var(--note-inset-top)) calc(32rpx + var(--note-inset-right)) calc(48rpx + var(--note-inset-bottom)) calc(32rpx + var(--note-inset-left));
-  overflow-x: hidden;
-  background: var(--note-bg);
+  padding: calc(clamp(24px, 6vh, 64px) + var(--note-inset-top)) calc(40rpx + var(--note-inset-right)) calc(48rpx + var(--note-inset-bottom)) calc(40rpx + var(--note-inset-left));
+  background: radial-gradient(ellipse at 86% 0%, rgba(var(--note-accent-rgb), .14), transparent 62%) top / 100% min(460px, 65vh) no-repeat, var(--note-bg);
 }
-
-.login-decoration {
-  position: absolute;
-  top: -280rpx;
-  right: -240rpx;
-  width: 680rpx;
-  height: 680rpx;
-  border: 1rpx solid rgba(var(--note-accent-rgb), 0.1);
-  border-radius: 50%;
-  box-shadow: 0 0 0 90rpx rgba(var(--note-accent-rgb), 0.025), 0 0 0 180rpx rgba(var(--note-accent-rgb), 0.018);
-  pointer-events: none;
-}
-
 .login-shell {
-  position: relative;
-  display: flex;
-  flex: 1;
-  flex-direction: column;
   width: 100%;
-  max-width: 720rpx;
+  max-width: 400px;
 }
-
-.login-local {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-height: 96rpx;
-  margin-top: 24rpx;
-  padding: 20rpx 24rpx;
-  border: 1rpx solid var(--note-separator);
-  border-radius: 24rpx;
-  background: var(--note-surface-2);
-  color: var(--note-accent);
-  text-align: left;
-  gap: 20rpx;
-  transition: background-color var(--note-duration-fast) var(--note-ease);
-}
-
-.login-local::after {
-  border: 0;
-}
-
-.login-local:active {
-  background: var(--note-accent-soft);
-}
-
-.login-local__copy {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4rpx;
-}
-
-.login-local__title {
-  color: var(--note-text);
-  font-size: var(--note-font-body);
-  font-weight: 600;
-}
-
-.login-local__desc {
-  color: var(--note-text-2);
-  font-size: var(--note-font-caption);
-  line-height: 1.5;
-}
-
 .login-header {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
+  padding: 16rpx 8rpx 44rpx;
+}
+.login-brand {
+  display: flex;
   align-items: center;
-  padding: 32rpx 16rpx 0;
-  text-align: center;
+  gap: 22rpx;
+  margin-bottom: 36rpx;
 }
-
-.login-mark {
-  position: relative;
-  width: 88rpx;
-  height: 88rpx;
-  border-radius: 24rpx;
-  background: linear-gradient(145deg, var(--note-accent) 0%, var(--note-accent-strong) 100%);
-  box-shadow: var(--note-shadow-accent);
-}
-
-.login-mark__rail {
-  position: absolute;
-  top: 20rpx;
-  bottom: 20rpx;
-  left: 28rpx;
-  width: 5rpx;
-  border-radius: 3rpx;
-  background: rgba(255, 255, 255, 0.92);
-}
-
-.login-mark__dot {
-  position: absolute;
-  left: 24rpx;
-  width: 15rpx;
-  height: 15rpx;
-  border-radius: 50%;
-  background: #ffffff;
-}
-
-.login-mark__dot--1 { top: 18rpx; }
-.login-mark__dot--2 { top: 37rpx; }
-.login-mark__dot--3 { top: 56rpx; }
-
-.login-eyebrow {
-  margin-top: 28rpx;
+.login-brand__name {
   color: var(--note-accent);
-  font-size: var(--note-font-footnote);
-  font-weight: 600;
-  letter-spacing: 1rpx;
-}
-
-.login-title {
-  margin-top: 10rpx;
-  color: var(--note-text);
-  font-size: var(--note-font-large);
+  font-size: var(--note-font-subhead);
   font-weight: 700;
-  letter-spacing: -1rpx;
-  line-height: 1.2;
+  letter-spacing: .06em;
 }
-
+.login-mark {
+  display: block;
+  width: 60px;
+  height: 60px;
+  border-radius: 15px;
+  box-shadow: 0 10px 24px rgba(0, 122, 255, .18);
+}
+.login-title {
+  color: var(--note-text);
+  font-size: max(76rpx, 38px);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: var(--note-track-large);
+}
 .login-tagline {
-  max-width: 600rpx;
-  margin-top: 14rpx;
+  margin-top: 16rpx;
   color: var(--note-text-2);
   font-size: var(--note-font-subhead);
   line-height: 1.5;
-  text-wrap: balance;
 }
-
 .login-form {
   width: 100%;
-  box-sizing: border-box;
-  margin-top: 56rpx;
-  padding: 40rpx 32rpx 32rpx;
-  border-radius: 36rpx;
-  border: 1rpx solid var(--note-separator);
-  box-shadow: var(--note-shadow-sm);
+  padding: clamp(14px, 5vw, 22px);
+  border: 1px solid var(--note-separator);
+  border-radius: 24px;
+  background: var(--note-surface);
+  box-shadow: var(--note-shadow-md);
 }
-
 .login-field-group + .login-field-group {
   margin-top: 28rpx;
 }
-
 .login-field-label {
   display: block;
-  margin: 0 8rpx 12rpx;
+  margin: 0 0 12rpx;
   color: var(--note-text-2);
   font-size: var(--note-font-footnote);
   font-weight: 600;
 }
-
 .login-input-shell {
-  min-height: var(--note-control-height);
-  overflow: hidden;
-  border: 1rpx solid transparent;
+  min-height: 52px;
+  border: 1rpx solid var(--note-separator);
   border-radius: var(--note-radius-md);
   background: var(--note-fill-2);
-  transition: border-color var(--note-duration) var(--note-ease), box-shadow var(--note-duration) var(--note-ease);
+  transition: border-color var(--note-duration-fast) var(--note-ease), box-shadow var(--note-duration-fast) var(--note-ease);
 }
-
 .login-input-shell:focus-within {
-  border-color: rgba(var(--note-accent-rgb), 0.5);
-  box-shadow: 0 0 0 4rpx rgba(var(--note-accent-rgb), 0.16);
+  border-color: var(--note-accent);
+  box-shadow: 0 0 0 3px var(--note-accent-soft);
 }
-
+.login-input-shell--error {
+  border-color: var(--note-danger);
+}
 :deep(.login-input-control) {
-  min-height: var(--note-control-height);
+  min-height: 52px;
   padding: 0 24rpx;
   box-sizing: border-box;
   color: var(--note-text);
   background: transparent;
   font-size: var(--note-font-body);
 }
-
-:deep(.login-input-placeholder) {
-  color: var(--note-text-3);
-}
-
 .login-remember-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4rpx 16rpx;
-  width: 100%;
-  min-height: 72rpx;
-  margin: 20rpx 0 0;
+  justify-content: space-between;
+  gap: 8rpx;
+  margin-top: 16rpx;
+  min-height: 44px;
 }
-
-.login-remember__hint {
-  margin-left: auto;
-  color: var(--note-text-3);
-  font-size: var(--note-font-caption);
-}
-
 :deep(.login-remember-control) {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   min-height: 44px;
-  color: var(--note-text-2);
   font-size: var(--note-font-footnote);
 }
-
-:deep(.login-remember-control .wd-checkbox__shape) {
-  margin-right: 14rpx;
+.login-remember__hint, .login-hint {
+  color: var(--note-text-2);
+  font-size: var(--note-font-caption);
 }
-
-:deep(.login-submit),
-:deep(.login-wechat) {
-  min-height: var(--note-control-height);
-  height: var(--note-control-height);
+.login-submit, .login-wechat {
+  margin-top: 24rpx;
+}
+:deep(.login-submit), :deep(.login-wechat) {
+  min-height: 48px;
+  height: 48px;
   border-radius: var(--note-radius-md);
   font-size: var(--note-font-body);
   font-weight: 600;
 }
-
-:deep(.login-submit) {
+:deep(.login-submit:not([disabled])) {
+  background: var(--note-accent-finish);
+  color: var(--note-accent-contrast);
   box-shadow: var(--note-shadow-accent);
 }
-
-:deep(.login-wechat) {
-  color: var(--note-accent);
-}
-
-.login-error {
-  display: block;
-  margin: 18rpx 8rpx 0;
-  color: var(--note-danger);
-  font-size: var(--note-font-footnote);
-  line-height: 1.45;
-}
-
-.login-submit {
-  width: 100%;
-  margin-top: 28rpx;
-}
-
-.login-divider {
+.login-local {
   display: flex;
+  justify-content: center;
   align-items: center;
-  gap: 20rpx;
-  margin: 32rpx 0 24rpx;
-}
-
-.login-divider__line {
-  flex: 1;
-  height: 1rpx;
-  background: var(--note-separator);
-}
-
-.login-divider__text {
-  color: var(--note-text-3);
-  font-size: var(--note-font-caption);
-}
-
-.login-wechat {
   width: 100%;
+  min-height: 48px;
+  padding: 8rpx;
+  margin: 20rpx 0 0;
+  border: 0;
+  border-radius: var(--note-radius-md);
+  background: transparent;
+  color: var(--note-accent);
+  font-size: var(--note-font-subhead);
 }
-
+.login-local::after {
+  border: 0;
+}
+.login-local:active {
+  background: var(--note-fill);
+}
 .login-hint {
   display: block;
-  margin-top: 28rpx;
-  padding: 0 20rpx;
-  color: var(--note-text-3);
+  text-align: center;
+  margin-top: 4rpx;
+  line-height: 1.5;
+}
+.login-error {
+  display: block;
+  margin: 12rpx 0 0;
+  color: var(--note-danger);
+  font-size: var(--note-font-footnote);
+  line-height: 1.5;
+}
+.login-import {
+  margin: 24rpx 0 8rpx;
+  padding: 24rpx;
+  border-radius: var(--note-radius-md);
+  background: var(--note-accent-soft);
+}
+.login-import__title {
+  display: block;
+  font-size: var(--note-font-subhead);
+  font-weight: 600;
+  color: var(--note-text);
+}
+.login-import__track {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 4px;
+  margin: 20rpx 0 12rpx;
+  background: var(--note-fill);
+}
+.login-import__fill {
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  background: var(--note-accent);
+  transition: transform var(--note-duration) var(--note-ease);
+}
+.login-import__detail {
+  display: block;
+  font-size: var(--note-font-footnote);
+  color: var(--note-text);
+  font-variant-numeric: tabular-nums;
+}
+.login-import__hint {
+  display: block;
+  margin-top: 8rpx;
+  color: var(--note-text-2);
   font-size: var(--note-font-caption);
   line-height: 1.5;
-  text-align: center;
 }
-
-@media (min-width: 700px) {
-  .login-page {
-    align-items: center;
-  }
-}
-
+@media (min-width: 700px) and (min-height: 700px) { .login-page { align-items: center; } }
 @media (max-height: 600px) and (orientation: landscape) {
-  .login-header {
-    padding-top: 0;
-  }
-
-  .login-mark {
-    display: none;
-  }
-
-  .login-eyebrow {
-    margin-top: 0;
-  }
-
-  .login-form {
-    margin-top: 24rpx;
-  }
+  .login-header { padding-top: 0; padding-bottom: 24rpx; }
+  .login-brand { margin-bottom: 12rpx; }
+  .login-mark { width: 40px; height: 40px; border-radius: 10px; }
 }
-
 </style>

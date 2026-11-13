@@ -35,8 +35,12 @@ function ensureSession() {
   if (startupPromise) return startupPromise
 
   startupPromise = (async () => {
-    await useStorageModeStore().initialize()
-    await useAuthStore().ensureValidSession()
+    const storage = useStorageModeStore()
+    const initialization = storage.initialize()
+    if (storage.mode === 'cloud') await initialization
+    const auth = useAuthStore()
+    if (await auth.ensureValidSession() && storage.mode === 'cloud')
+      await auth.requireCloudAccess()
   })()
     .catch((error) => {
       console.warn('startup session check failed', error)
@@ -112,8 +116,8 @@ html.note-appearance-dark page {
 html.note-appearance-light,
 html.note-appearance-light body,
 html.note-appearance-light page {
-  --note-bg: #f5f7fb;
-  background: #f5f7fb;
+  --note-bg: #f2f2f7;
+  background: #f2f2f7;
 }
 
 @supports (font: -apple-system-body) {

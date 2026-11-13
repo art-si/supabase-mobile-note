@@ -20,6 +20,7 @@ try {
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
     page.setDefaultTimeout(8000)
+    await page.route('**/rest/v1/rpc/get_note_cloud_access', route => route.fulfill({ json: 'login' }))
     await page.goto(`${base}/#/pages/timeline/index`, { waitUntil: 'networkidle' })
     await page.locator('.tl-strip').waitFor()
     await page.evaluate(({ top, bottom, left, right }) => {
@@ -47,7 +48,7 @@ try {
     // Wot's semantic button listens to click; this also checks the reported back action.
     await page.locator('[aria-label="取消编辑"]').click()
     await page.locator('.tl-strip').waitFor()
-    await page.locator('[aria-label="我的"]').tap()
+    await page.locator('[aria-label="设置"]').tap()
     await page.locator('.mine-appearance').waitFor()
     await checkBars()
     const options = await page.locator('.mine-appearance__option').evaluateAll(els => els.map(el => el.getBoundingClientRect().toJSON()))

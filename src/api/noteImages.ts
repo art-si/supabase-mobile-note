@@ -5,7 +5,7 @@ import { isLocalStorageMode } from '@/utils/storageMode'
 export const NOTE_IMAGE_BUCKET = 'note-images'
 export const MAX_NOTE_IMAGES = 9
 export const MAX_NOTE_IMAGE_BYTES = 10 * 1024 * 1024
-export const NOTE_IMAGE_SIGN_TTL = 24 * 60 * 60
+export const NOTE_IMAGE_SIGN_TTL = 10 * 60
 
 export interface ChosenImage {
   path: string
@@ -99,20 +99,38 @@ export function uploadNoteImage(
   // #ifdef H5
   if (filePath.startsWith('note-local-image://')) {
     return resolveLocalNoteImage(filePath)
-      .then((localUrl) => fetch(localUrl))
+      .then((localUrl) => {
+        if (!localUrl) throw new Error('本机图片不存在，请检查记录后重试')
+        return fetch(localUrl)
+      })
       .then((response) => {
         if (!response.ok) throw new Error('读取本机图片失败')
         return response.blob()
       })
-      .then(async (blob) => {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}`, 'x-upsert': 'true' },
-          body: blob
-        })
-        if (!response.ok) throw new Error('图片上传失败，请检查网络后重试')
-        return objectPath
-      })
+      .then((blob) => new Promise<string>((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', url)
+        xhr.timeout = 30000
+        xhr.setRequestHeader('apikey', SUPABASE_KEY)
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+        xhr.setRequestHeader('x-upsert', 'true')
+        xhr.setRequestHeader('Content-Type', blob.type || 'image/jpeg')
+        xhr.upload.onprogress = event => {
+          if (event.lengthComputable) onProgress?.(Math.min(99, Math.round(event.loaded / event.total * 100)))
+        }
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            onProgress?.(100)
+            resolve(objectPath)
+          } else {
+            reject(new Error('图片上传失败，请检查网络后继续导入'))
+          }
+        }
+        xhr.onerror = () => reject(new Error('图片上传中断，请检查网络后继续导入'))
+        xhr.ontimeout = () => reject(new Error('图片上传超时，请重试'))
+        xhr.onabort = () => reject(new Error('图片上传已中断，请重试'))
+        xhr.send(blob)
+      }))
   }
   // #endif
 
@@ -129,6 +147,7 @@ export function uploadNoteImage(
       success(response) {
         const statusCode = response.statusCode || 0
         if (statusCode >= 200 && statusCode < 300) {
+          onProgress?.(100)
           resolve(objectPath)
           return
         }

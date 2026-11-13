@@ -99,7 +99,6 @@ function select(value: string) {
   height: 36px;
   border-radius: var(--note-radius-sm);
   color: var(--note-accent);
-  background: var(--note-accent-soft);
 }
 
 .note-action-sheet__label {
@@ -119,10 +118,6 @@ function select(value: string) {
 .note-action-sheet__row--danger .note-action-sheet__icon,
 .note-action-sheet__row--danger > :last-child {
   color: var(--note-danger);
-}
-
-.note-action-sheet__row--danger .note-action-sheet__icon {
-  background: var(--note-danger-soft);
 }
 
 .note-action-sheet__cancel {

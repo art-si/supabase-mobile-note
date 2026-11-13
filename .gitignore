@@ -4,3 +4,5 @@
 /.artifacts/
 /supabase/.temp/
 .env.local
+__pycache__/
+*.pyc

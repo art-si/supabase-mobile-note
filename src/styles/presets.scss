@@ -6,9 +6,9 @@
 
 // Apple system accent families. Add a palette here and its label in stores/theme.ts.
 $palettes: (
-  'blue': (light: #007aff, dark: #0a84ff, rgb: '0, 122, 255', rgb-dark: '10, 132, 255'),
+  'blue': (light: #006edb, dark: #0a84ff, rgb: '0, 110, 219', rgb-dark: '10, 132, 255'),
   'indigo': (light: #5856d6, dark: #5e5ce6, rgb: '88, 86, 214', rgb-dark: '94, 92, 230'),
-  'teal': (light: #30b0c7, dark: #40c8e0, rgb: '48, 176, 199', rgb-dark: '64, 200, 224')
+  'teal': (light: #007f90, dark: #40c8e0, rgb: '0, 127, 144', rgb-dark: '64, 200, 224')
 );
 
 @mixin shades($accent, $base, $deep) {
@@ -32,6 +32,7 @@ $palettes: (
   --note-accent-strong: #{color.mix($deep, $accent, 12%)};
   --note-accent-soft: #{$soft};
   --note-accent-contrast: #ffffff;
+  --note-accent-finish: linear-gradient(155deg, #{$accent}, #{color.mix($deep, $accent, 18%)});
   --note-shadow-accent: 0 8rpx 24rpx rgba(#{$rgb}, 0.32);
   --wot-feedback-accent: rgba(#{$rgb}, 0.08);
 }
@@ -44,6 +45,12 @@ $palettes: (
 @mixin dark-palette($preset) {
   $accent: map.get($preset, dark);
   @include palette($accent, map.get($preset, rgb-dark), #1c1c1e, #ffffff, color.change($accent, $alpha: 0.18));
+  @if $accent == #5e5ce6 {
+    --note-accent-contrast: #ffffff;
+    --note-accent-finish: linear-gradient(155deg, #{$accent}, #{color.mix(#000000, $accent, 18%)});
+  } @else {
+    --note-accent-contrast: #071b24;
+  }
 }
 
 :root,

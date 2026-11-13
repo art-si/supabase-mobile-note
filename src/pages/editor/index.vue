@@ -1,11 +1,23 @@
 <script setup lang="ts">
-import { computed, getCurrentInstance, nextTick, reactive, ref } from 'vue'
+import { computed, getCurrentInstance, reactive, ref, watch } from 'vue'
 import { onBackPress, onLoad, onUnload } from '@dcloudio/uni-app'
 import NoteIcon from '@/components/common/NoteIcon.vue'
+import NoteTag from '@/components/common/NoteTag.vue'
 import NoteNavBar from '@/components/common/NoteNavBar.vue'
 import NoteEmojiPanel from '@/components/common/NoteEmojiPanel.vue'
 import NoteSheet from '@/components/common/NoteSheet.vue'
+import NoteCalendar from '@/components/common/NoteCalendar.vue'
 import NoteActionSheet from '@/components/common/NoteActionSheet.vue'
+import NoteAssistant from '@/components/common/NoteAssistant.vue'
+let nativeSpeech = false
+// #ifdef H5
+import { Capacitor } from '@capacitor/core'
+import NoteVoiceInput from '@/components/common/NoteVoiceInput.vue'
+nativeSpeech = Capacitor.getPlatform() === 'android'
+// #endif
+import { createNoteBatch, getCloudNote } from '@/api/notes'
+import type { AssistantEntry } from '@/api/noteAssistant'
+import { useNoteAssistant } from '@/composables/useNoteAssistant'
 import { getUserFacingErrorMessage } from '@/api/supabase'
 import {
   MAX_NOTE_IMAGES,
@@ -21,10 +33,11 @@ import { useAuthStore } from '@/stores/auth'
 import { useNotesStore } from '@/stores/notes'
 import { useStorageModeStore } from '@/stores/storageMode'
 import { isLocalStorageMode } from '@/utils/storageMode'
-import { formatDateTime } from '@/utils/format'
+import { formatDateTime, formatTime, dayKey, parseDayKey } from '@/utils/format'
 import { haptic } from '@/utils/haptic'
-import { editorInitialHtml, htmlToPlainText } from '@/utils/richText'
+import { editorInitialHtml, htmlToPlainText, legacyToHtml } from '@/utils/richText'
 import { getSystemInsets } from '@/utils/systemInsets'
+import { readEditorDraft, saveEditorDraft, clearEditorDraft } from '@/api/editorDrafts'
 
 const MAX_LENGTH = 5000
 const MAX_TAGS = 8
@@ -35,6 +48,7 @@ interface EditorContext {
   format(name: string, value?: unknown): void
   insertText(options: { text: string }): void
   setContents(options: { html?: string }): void
+  getContents(options: { success: (result: { html: string; text: string }) => void; fail?: () => void }): void
   blur(): void
 }
 
@@ -50,6 +64,9 @@ const { themeName, themeClass, isDark } = usePageTheme()
 const auth = useAuthStore()
 const store = useNotesStore()
 const storage = useStorageModeStore()
+const { available: aiAvailable, cloudToken } = useNoteAssistant()
+const aiOpen = ref(false)
+const aiError = ref('')
 const { top: statusInset, bottom: safeBottom } = getSystemInsets()
 
 const noteId = ref('')
@@ -58,9 +75,15 @@ const mood = ref<NoteMood>('calm')
 const tags = ref<string[]>([])
 const tagInput = ref('')
 const tagOpen = ref(false)
-const aiOpen = ref(false)
 const imageSourceOpen = ref(false)
 const dateTimeOpen = ref(false)
+const quickOpen = ref(false)
+const phraseInput = ref('')
+const quickPhrases = ref(readQuickPhrases())
+const draftReady = ref(false)
+const draftStatus = ref('')
+const draftRestored = ref(false)
+let draftTimer: ReturnType<typeof setTimeout> | null = null
 const confirmOpen = ref(false)
 const confirmAction = ref<'discard' | 'delete'>('discard')
 const listening = ref(false)
@@ -68,17 +91,20 @@ const voiceMessage = ref('')
 const saving = ref(false)
 const deleting = ref(false)
 const createdAt = ref(new Date().toISOString())
+const dateTimeDraft = ref(createdAt.value)
 const dateValue = computed(() => {
-  const date = new Date(createdAt.value)
+  const date = new Date(dateTimeDraft.value)
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 })
 const timeValue = computed(() => {
-  const date = new Date(createdAt.value)
+  const date = new Date(dateTimeDraft.value)
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 })
 
 const html = ref('')
-const textLength = ref(0)
+const plainText = ref('')
+const voiceAvailable = ref(false)
+const textLength = computed(() => plainText.value.length)
 const formats = ref<Record<string, unknown>>({})
 const editorCtx = ref<EditorContext | null>(null)
 const attachments = ref<Attachment[]>([])
@@ -110,7 +136,6 @@ let recognition: SpeechRecognitionInstance | null = null
 // #endif
 
 const isEdit = computed(() => Boolean(noteId.value))
-const plainText = computed(() => htmlToPlainText(html.value))
 const suggestedTags = computed(() => {
   const selected = new Set(tags.value.map((tag) => tag.toLocaleLowerCase()))
   const counts = new Map<string, { label: string; count: number }>()
@@ -134,7 +159,9 @@ const mediaBusy = computed(() => attachments.value.some((item) => item.status !=
 const overLimit = computed(() => textLength.value > MAX_LENGTH)
 const canSave = computed(
   () =>
+    Boolean(editorCtx.value) &&
     !saving.value &&
+    !deleting.value &&
     !mediaBusy.value &&
     !overLimit.value &&
     (plainText.value.trim().length > 0 || doneImages.value.length > 0)
@@ -155,28 +182,31 @@ const dirty = computed(() => {
 })
 
 const toolbarBottom = computed(() =>
-  keyboardHeight.value > 0 ? `${keyboardHeight.value}px` : '0px'
+  `${keyboardOffset.value}px`
 )
+const keyboardOffset = ref(0)
+let viewportBaseHeight = 0
 const toolbarInset = computed(() => keyboardHeight.value > 0 ? '0px' : 'var(--note-inset-bottom)')
 const emojiBottom = computed(() => `calc(${toolbarBottom.value} + 50px + ${toolbarInset.value})`)
 const voiceBottom = computed(() => `calc(${toolbarBottom.value} + 58px + ${toolbarInset.value})`)
 
 function onKeyboardHeightChange(result: { height: number }) {
   keyboardHeight.value = result.height
+  keyboardOffset.value = result.height
 }
 
 function updateCreatedDate(value: string) {
   const [year, month, day] = value.split('-').map(Number)
-  const date = new Date(createdAt.value)
+  const date = new Date(dateTimeDraft.value)
   date.setFullYear(year!, month! - 1, day!)
-  createdAt.value = date.toISOString()
+  dateTimeDraft.value = date.toISOString()
 }
 
 function updateCreatedTime(value: string) {
   const [hour, minute] = value.split(':').map(Number)
-  const date = new Date(createdAt.value)
+  const date = new Date(dateTimeDraft.value)
   date.setHours(hour!, minute!, 0, 0)
-  createdAt.value = date.toISOString()
+  dateTimeDraft.value = date.toISOString()
 }
 
 // #ifdef H5
@@ -184,7 +214,10 @@ function updateCreatedTime(value: string) {
 function syncKeyboardHeight() {
   const viewport = window.visualViewport
   if (!viewport) return
-  keyboardHeight.value = Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop))
+  viewportBaseHeight = Math.max(viewportBaseHeight, window.innerHeight)
+  keyboardOffset.value = Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop))
+  const resizedHeight = viewportBaseHeight - window.innerHeight
+  keyboardHeight.value = Math.max(keyboardOffset.value, resizedHeight > 120 ? resizedHeight : 0)
 }
 
 function beforeUnload(event: BeforeUnloadEvent) {
@@ -195,17 +228,42 @@ function beforeUnload(event: BeforeUnloadEvent) {
 // #endif
 
 onLoad(async (query) => {
-  await storage.initialize()
+  const initialization = storage.initialize()
+  if (storage.mode === 'cloud') await initialization
   // #ifndef H5
   uni.onKeyboardHeightChange(onKeyboardHeightChange)
   // #endif
   // #ifdef H5
   window.visualViewport?.addEventListener('resize', syncKeyboardHeight)
+  window.addEventListener('resize', syncKeyboardHeight)
+  syncKeyboardHeight()
   window.addEventListener('beforeunload', beforeUnload)
   // #endif
   const id = query?.id
-  if (!id) return
-  const found = [...store.notes, ...store.dayNotes].find((note) => note.id === id)
+  if (!id) {
+    if (typeof query?.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(query.day)) {
+      const date = parseDayKey(query.day)
+      if (Number.isFinite(date.getTime()) && dayKey(date.toISOString()) === query.day) {
+        const now = new Date()
+        date.setHours(now.getHours(), now.getMinutes(), 0, 0)
+        createdAt.value = date.toISOString()
+      }
+    }
+    restoreTextDraft()
+    return
+  }
+  let found = [...store.notes, ...store.dayNotes].find((note) => note.id === id)
+  if (!found && storage.mode === 'cloud') {
+    try {
+      const token = await store.requireToken()
+      if (!auth.user?.id) throw new Error('请重新登录云端')
+      found = await getCloudNote(token, auth.user.id, id)
+    } catch (error) {
+      uni.showToast({ title: getUserFacingErrorMessage(error, '无法打开云端笔记'), icon: 'none' })
+      setTimeout(() => uni.navigateBack(), 600)
+      return
+    }
+  }
   if (!found) {
     uni.showToast({ title: '笔记不存在', icon: 'none' })
     setTimeout(() => uni.navigateBack(), 600)
@@ -216,16 +274,17 @@ onLoad(async (query) => {
   mood.value = found.mood
   tags.value = [...(found.tags ?? [])]
   createdAt.value = found.createdAt
+  attachments.value = found.images.map((path) =>
+    reactive<Attachment>({ key: path, localPath: '', objectPath: path, status: 'done', progress: 100 })
+  )
   setEditorContent(found.content)
-  void store.resolveImages([found]).then(() => {
-    if (disposed) return
-    attachments.value = found.images.map((path) =>
-      reactive<Attachment>({ key: path, localPath: '', objectPath: path, status: 'done', progress: 100 })
-    )
-  })
+  restoreTextDraft()
+  void store.resolveImages([found])
 })
 
 onUnload(() => {
+  if (draftTimer) clearTimeout(draftTimer)
+  if (!persisted && !allowExit) persistTextDraft()
   disposed = true
   // #ifndef H5
   uni.offKeyboardHeightChange(onKeyboardHeightChange)
@@ -233,24 +292,114 @@ onUnload(() => {
   // #ifdef H5
   window.visualViewport?.removeEventListener('resize', syncKeyboardHeight)
   window.removeEventListener('beforeunload', beforeUnload)
+  window.removeEventListener('resize', syncKeyboardHeight)
+  const root = document.querySelector('#note-editor .ql-editor')
+  root?.removeEventListener('input', syncEditorFromDom)
+  root?.removeEventListener('compositionend', syncEditorFromDom)
   recognition?.abort()
   // #endif
   if (!persisted) cleanupUnsavedImages()
 })
 
 onBackPress(() => {
-  if (dateTimeOpen.value) { dateTimeOpen.value = false; return true }
-  if (imageSourceOpen.value) { imageSourceOpen.value = false; return true }
-  if (confirmOpen.value) { confirmOpen.value = false; return true }
+  if (persisted || allowExit) return false
+  if (saving.value || deleting.value) return true
   if (aiOpen.value) { aiOpen.value = false; return true }
-  if (tagOpen.value) { tagOpen.value = false; return true }
-  if (emojiOpen.value) { emojiOpen.value = false; return true }
-  if (!dirty.value || persisted || allowExit || saving.value) return false
+  const panel = [confirmOpen, imageSourceOpen, dateTimeOpen, quickOpen, tagOpen, emojiOpen].find(item => item.value)
+  if (panel) {
+    panel.value = false
+    return true
+  }
+  if (!dirty.value) return false
   cancel()
   return true
 })
 
+const draftKey = computed(() => `note-text-draft:${storage.mode}:${auth.user?.id || 'local'}:${noteId.value || 'new'}`)
+
+function restoreTextDraft() {
+  const draft = readEditorDraft(draftKey.value)
+  if (draft && draft.originalUpdatedAt === (original.value?.updatedAt || '')) {
+    setEditorContent(draft.html)
+    tags.value = draft.tags
+    createdAt.value = draft.createdAt
+    draftRestored.value = true
+    draftStatus.value = '文字草稿已保存在本机'
+  }
+  draftReady.value = true
+}
+
+function persistTextDraft() {
+  if (!draftReady.value || persisted || allowExit) return false
+  try {
+    if (!dirty.value || (!plainText.value.trim() && !tags.value.length)) {
+      clearEditorDraft(draftKey.value)
+      draftStatus.value = ''
+      return false
+    }
+    saveEditorDraft(draftKey.value, { html: html.value, tags: tags.value, createdAt: createdAt.value, originalUpdatedAt: original.value?.updatedAt || '' })
+    draftStatus.value = '文字草稿已保存在本机'
+    return true
+  } catch (error) {
+    console.warn('[editor] draft write failed', error)
+    draftStatus.value = '草稿保存失败，请及时完成'
+    return false
+  }
+}
+
+function clearTextDraft() {
+  if (draftTimer) clearTimeout(draftTimer)
+  try { clearEditorDraft(draftKey.value) } catch (error) { console.warn('[editor] draft cleanup failed', error) }
+}
+
+watch([html, tags, createdAt], () => {
+  if (!draftReady.value || persisted || allowExit) return
+  if (draftTimer) clearTimeout(draftTimer)
+  draftTimer = setTimeout(persistTextDraft, 500)
+}, { deep: true })
+
+function readQuickPhrases(): string[] {
+  try {
+    const value: unknown = uni.getStorageSync('note-quick-phrases')
+    if (Array.isArray(value) && value.length <= 8 && value.every(item => typeof item === 'string' && item.length <= 30)) return value
+  } catch (error) {
+    console.warn('[editor] phrase read failed', error)
+  }
+  return ['喂奶：', '辅食：', '排便：', '睡眠：']
+}
+
+function persistQuickPhrases() {
+  try { uni.setStorageSync('note-quick-phrases', quickPhrases.value) }
+  catch (error) { console.warn('[editor] phrase write failed', error); uni.showToast({ title: '短语保存失败，请重试', icon: 'none' }) }
+}
+
+function insertPhrase(phrase: string) {
+  editorCtx.value?.insertText({ text: phrase })
+  quickOpen.value = false
+  haptic('light')
+}
+
+function addPhrase() {
+  const phrase = phraseInput.value.trim()
+  if (!phrase || quickPhrases.value.length >= 8 || quickPhrases.value.includes(phrase)) return
+  quickPhrases.value = [...quickPhrases.value, phrase]
+  phraseInput.value = ''
+  persistQuickPhrases()
+}
+
+function removePhrase(phrase: string) {
+  quickPhrases.value = quickPhrases.value.filter(item => item !== phrase)
+  persistQuickPhrases()
+}
+
 function onEditorReady() {
+  // #ifdef H5
+  voiceAvailable.value = 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window
+  // Android paste/composition can reach the DOM before Quill emits input.
+  const root = document.querySelector('#note-editor .ql-editor')
+  root?.addEventListener('input', syncEditorFromDom)
+  root?.addEventListener('compositionend', syncEditorFromDom)
+  // #endif
   uni
     .createSelectorQuery()
     .in(instance)
@@ -258,17 +407,27 @@ function onEditorReady() {
     .context((result) => {
       const context = (result as unknown as { context: EditorContext }).context
       editorCtx.value = context
-      if (original.value) {
+      if (html.value) {
         context.setContents({ html: html.value })
       }
     })
     .exec()
 }
 
+// #ifdef H5
+function syncEditorFromDom() {
+  requestAnimationFrame(() => {
+    if (disposed) return
+    const root = document.querySelector<HTMLElement>('#note-editor .ql-editor')
+    if (root) onEditorInput({ detail: { html: root.innerHTML, text: root.innerText } })
+  })
+}
+// #endif
+
 function setEditorContent(content: string) {
   const initialHtml = editorInitialHtml(content)
   html.value = initialHtml
-  textLength.value = htmlToPlainText(content).length
+  plainText.value = htmlToPlainText(content)
 
   // The route data and native editor can become ready in either order.
   // Keep the model as the source of truth and hydrate immediately when possible.
@@ -276,8 +435,8 @@ function setEditorContent(content: string) {
 }
 
 function onEditorInput(event: { detail: { html: string; text: string } }) {
-  html.value = event.detail.html
-  textLength.value = event.detail.text.length
+  plainText.value = event.detail.text.replace(/\n$/, '')
+  html.value = event.detail.html || legacyToHtml(plainText.value)
 }
 
 function onStatusChange(event: { detail: Record<string, unknown> }) {
@@ -286,6 +445,18 @@ function onStatusChange(event: { detail: Record<string, unknown> }) {
 
 function toggleBold() {
   editorCtx.value?.format('bold')
+}
+
+function openDateTime() {
+  dateTimeDraft.value = createdAt.value
+  hideKeyboard()
+  emojiOpen.value = false
+  dateTimeOpen.value = true
+}
+
+function confirmDateTime() {
+  createdAt.value = dateTimeDraft.value
+  haptic('light')
 }
 
 function hideKeyboard() {
@@ -365,7 +536,7 @@ function startVoice() {
   try {
     session.start()
     listening.value = true
-    voiceMessage.value = '正在聆听，松开结束'
+    voiceMessage.value = '正在聆听，点击麦克风结束'
   } catch {
     recognition = null
     uni.showToast({ title: '无法启动语音输入，请重试', icon: 'none' })
@@ -396,10 +567,15 @@ function stopVoice() {
 }
 
 async function requireToken() {
-  if (isLocalStorageMode()) return { token: '', userId: 'local-device' }
+  if (isLocalStorageMode()) return {
+  token: '', userId: 'local-device'
+}
   const valid = await auth.ensureValidSession()
   if (!valid || !auth.token || !auth.user?.id) throw new Error('登录已过期，请重新登录')
-  return { token: auth.token, userId: auth.user.id }
+  await auth.requireCloudAccess()
+  return {
+  token: auth.token, userId: auth.user.id
+}
 }
 
 function addImages() {
@@ -411,11 +587,6 @@ function addImages() {
   hideKeyboard()
   emojiOpen.value = false
   imageSourceOpen.value = true
-}
-
-function addImagesFromRecognition() {
-  aiOpen.value = false
-  void nextTick(addImages)
 }
 
 async function selectImageSource(value: string) {
@@ -507,6 +678,7 @@ function previewAttachment(attachment: Attachment) {
 }
 
 function cancel() {
+  if (saving.value || deleting.value) return
   if (!dirty.value) {
     navigateToPreviousPage()
     return
@@ -516,11 +688,20 @@ function cancel() {
 }
 
 function navigateToPreviousPage() {
-  if (getCurrentPages().length > 1) uni.navigateBack()
-  else uni.reLaunch({ url: '/pages/timeline/index' })
+  if (getCurrentPages().length > 1) return uni.navigateBack()
+  return uni.reLaunch({ url: '/pages/timeline/index' })
 }
 
 async function save() {
+  if (saving.value) return
+  if (editorCtx.value) {
+    await new Promise<void>((resolve) => {
+      editorCtx.value!.getContents({
+        success: (detail) => { onEditorInput({ detail }); resolve() },
+        fail: () => resolve()
+      })
+    })
+  }
   if (!canSave.value) return
   saving.value = true
   const draft = {
@@ -537,10 +718,46 @@ async function save() {
       await store.create(draft)
     }
     persisted = true
-    uni.showToast({ title: '已保存', icon: 'success' })
-    setTimeout(() => uni.navigateBack(), 400)
+    clearTextDraft()
+    haptic('success')
+    uni.showToast({ title: '已保存', icon: 'none', duration: 1000 })
+    await navigateToPreviousPage()
   } catch (error) {
     uni.showToast({ title: getUserFacingErrorMessage(error, '保存失败，请稍后重试'), icon: 'none' })
+  } finally {
+    saving.value = false
+  }
+}
+
+function openAi() {
+  if (!aiAvailable.value || isEdit.value || attachments.value.length || saving.value) return
+  hideKeyboard()
+  emojiOpen.value = false
+  aiError.value = ''
+  aiOpen.value = true
+}
+
+async function saveAi(entries: AssistantEntry[]) {
+  if (saving.value || !aiOpen.value || !entries.length) return
+  saving.value = true
+  aiError.value = ''
+  try {
+    const drafts = entries.map(entry => {
+      const date = parseDayKey(entry.day)
+      const [hour, minute] = (entry.time || formatTime(createdAt.value)).split(':').map(Number)
+      date.setHours(hour ?? 0, minute ?? 0, 0, 0)
+      return { id: entry.id, content: legacyToHtml(entry.text.trim()), mood: mood.value, images: [], tags: [...tags.value], createdAt: date.toISOString() }
+    })
+    await createNoteBatch(await cloudToken(), drafts)
+    store.invalidateMonths()
+    persisted = true
+    aiOpen.value = false
+    clearTextDraft()
+    haptic('success')
+    uni.showToast({ title: `已保存 ${drafts.length} 条笔记`, icon: 'none' })
+    await navigateToPreviousPage()
+  } catch (error) {
+    aiError.value = getUserFacingErrorMessage(error, '保存失败，可以重试')
   } finally {
     saving.value = false
   }
@@ -555,6 +772,7 @@ function remove() {
 async function confirmEditorAction() {
   if (confirmAction.value === 'discard') {
     allowExit = true
+    clearTextDraft()
     navigateToPreviousPage()
     return
   }
@@ -563,13 +781,25 @@ async function confirmEditorAction() {
   try {
     await store.remove(noteId.value)
     persisted = true
-    uni.showToast({ title: '已删除', icon: 'success' })
-    setTimeout(() => uni.navigateBack(), 400)
+    clearTextDraft()
+    haptic('success')
+    uni.showToast({ title: '已删除', icon: 'none', duration: 1000 })
+    await navigateToPreviousPage()
   } catch (error) {
     uni.showToast({ title: getUserFacingErrorMessage(error, '删除失败，请稍后重试'), icon: 'none' })
   } finally {
     deleting.value = false
   }
+}
+
+function keepDraftAndExit() {
+  if (!persistTextDraft()) {
+    uni.showToast({ title: '草稿未能保存，请继续编辑', icon: 'none' })
+    return
+  }
+  confirmOpen.value = false
+  allowExit = true
+  void navigateToPreviousPage()
 }
 </script>
 
@@ -578,56 +808,46 @@ async function confirmEditorAction() {
     <view class="page editor-page" :class="[themeClass, { 'note-dark': isDark }]" :style="{ '--note-status-inset': `${statusInset}px`, '--note-safe-bottom': `${safeBottom}px` }">
       <NoteNavBar>
         <template #title>
-          <button class="editor-date-title" aria-label="修改笔记日期和时间" @tap="dateTimeOpen = true">
-            {{ formatDateTime(createdAt) }}
+          <button class="editor-date-title" aria-label="修改笔记日期和时间" @tap="openDateTime">
+            <text class="editor-date-title__label">{{ formatDateTime(createdAt) }}</text>
+            <NoteIcon class="editor-date-title__icon" name="chevron-right" size="11" />
           </button>
         </template>
         <template #left>
-          <wd-button class="editor-nav-btn" variant="text" size="medium" aria-label="取消编辑" @click="cancel">
+          <wd-button class="editor-nav-btn" variant="text" size="medium" aria-label="取消编辑" :disabled="saving || deleting" @click="cancel">
             <NoteIcon name="back" size="40rpx" />
           </wd-button>
         </template>
         <template #right>
-          <wd-button
+          <button
             class="editor-nav-btn editor-nav-btn--save"
-            variant="text"
-            size="medium"
-            :loading="saving"
             :disabled="!canSave"
-            @click="save"
+            @tap="save"
           >
-            完成
-          </wd-button>
+            {{ saving ? '保存中…' : '完成' }}
+          </button>
         </template>
       </NoteNavBar>
 
       <view class="editor-body">
-        <view class="editor-paper note-card">
+        <view v-if="draftRestored" class="editor-draft-restored" role="status">
+          <text>已恢复上次未完成的文字</text><button aria-label="关闭草稿提示" @tap="draftRestored = false"><NoteIcon name="close" size="24rpx" /></button>
+        </view>
+        <view class="editor-paper">
           <editor
             id="note-editor"
             class="editor-richtext"
             placeholder="记录此刻的想法…"
-            :read-only="saving"
+            :read-only="saving || deleting"
             @ready="onEditorReady"
             @input="onEditorInput"
             @statuschange="onStatusChange"
           />
+          <view v-if="!plainText.trim() && !isEdit" class="editor-quick-start" aria-label="快速开始记录">
+            <button v-for="phrase in quickPhrases" :key="phrase" :disabled="!editorCtx" @mousedown.prevent @tap="insertPhrase(phrase)">{{ phrase }}</button>
+          </view>
           <view class="editor-input-actions">
-            <button
-              class="editor-tool"
-              :class="{ 'editor-tool--active': listening }"
-              :aria-pressed="listening"
-              :aria-label="listening ? '松开结束语音输入' : '按住语音输入'"
-              @mousedown.prevent
-              @touchstart.stop.prevent="startVoice"
-              @touchend.stop.prevent="stopVoice"
-              @touchcancel.stop.prevent="stopVoice"
-            >
-              <NoteIcon name="mic" size="42rpx" />
-            </button>
-            <button class="editor-tool" aria-label="图片识别工具" @mousedown.prevent @tap="aiOpen = true">
-              <NoteIcon name="sparkles" size="42rpx" />
-            </button>
+            <text v-if="draftStatus" class="editor-draft-status" role="status">{{ draftStatus }}</text>
             <text class="editor-count" :class="{ 'editor-count--limit': overLimit }">{{ textLength }} / {{ MAX_LENGTH }}</text>
           </view>
 
@@ -663,15 +883,7 @@ async function confirmEditorAction() {
           </view>
 
           <view v-if="tags.length" class="editor-tags" aria-label="已添加的标签">
-            <view v-for="tag in tags" :key="tag" class="editor-tag">
-              <view class="editor-tag__label">
-                <NoteIcon name="tag" size="28rpx" />
-                <text class="editor-tag__text">{{ tag }}</text>
-              </view>
-              <button class="editor-tag__remove" :aria-label="`移除标签 ${tag}`" @tap="removeTag(tag)">
-                <NoteIcon name="close" size="28rpx" />
-              </button>
-            </view>
+            <NoteTag v-for="tag in tags" :key="tag" :label="tag" removable @remove="removeTag(tag)" />
           </view>
         </view>
 
@@ -690,17 +902,14 @@ async function confirmEditorAction() {
         <NoteEmojiPanel @pick="onEmojiPick" @close="emojiOpen = false" />
       </view>
 
-      <NoteSheet v-model:show="dateTimeOpen" title="记录时间" label="选择笔记的记录日期和时间">
-        <view class="editor-datetime-sheet">
-          <picker mode="date" :value="dateValue" @change="updateCreatedDate($event.detail.value)">
-            <view class="editor-datetime-row"><text>日期</text><text>{{ dateValue }}</text><NoteIcon name="chevron-right" size="28rpx" /></view>
-          </picker>
-          <picker mode="time" :value="timeValue" @change="updateCreatedTime($event.detail.value)">
-            <view class="editor-datetime-row"><text>时间</text><text>{{ timeValue }}</text><NoteIcon name="chevron-right" size="28rpx" /></view>
-          </picker>
-        </view>
-        <template #footer><button class="note-btn note-btn--primary editor-sheet__done" @tap="dateTimeOpen = false">完成</button></template>
-      </NoteSheet>
+      <NoteCalendar
+        v-model:show="dateTimeOpen"
+        :selected-day="dateValue"
+        :selected-time="timeValue"
+        @select="updateCreatedDate"
+        @time="updateCreatedTime"
+        @confirm="confirmDateTime"
+      />
 
       <view class="editor-toolbar" :style="{ bottom: toolbarBottom, '--note-toolbar-inset': toolbarInset }" role="toolbar" aria-label="笔记编辑工具">
         <view class="editor-toolbar__group">
@@ -736,12 +945,31 @@ async function confirmEditorAction() {
             aria-label="整理标签"
             :aria-pressed="tagOpen"
             @mousedown.prevent
-            @tap="tagOpen = true"
+            @tap="hideKeyboard(); emojiOpen = false; tagOpen = true"
           >
             <NoteIcon name="tag" size="40rpx" />
           </button>
         </view>
+        <button class="editor-tool" aria-label="常用短语" @mousedown.prevent @tap="hideKeyboard(); quickOpen = true"><NoteIcon name="quick" size="40rpx" /></button>
+        <button v-if="aiAvailable && !isEdit" class="editor-tool" aria-label="AI 整理"
+          :disabled="attachments.length > 0 || saving || listening" @mousedown.prevent @tap="openAi">
+          <NoteIcon name="sparkles" size="40rpx" />
+        </button>
         <view class="editor-toolbar__spacer" />
+        <!-- #ifdef H5 -->
+        <NoteVoiceInput v-if="aiAvailable && nativeSpeech" @text="text => editorCtx?.insertText({ text })" />
+        <!-- #endif -->
+        <button v-if="storage.mode === 'cloud' && voiceAvailable && keyboardHeight === 0 && !nativeSpeech"
+          class="editor-tool"
+          :class="{ 'editor-tool--active': listening }"
+          :aria-pressed="listening"
+          :aria-label="listening ? '结束语音输入' : '语音输入'"
+          @mousedown.prevent
+          @tap="listening ? stopVoice() : startVoice()"
+        >
+          <NoteIcon name="mic" size="42rpx" />
+        </button>
+
         <button
           v-if="keyboardHeight > 0"
           class="editor-tool"
@@ -753,67 +981,67 @@ async function confirmEditorAction() {
         </button>
       </view>
 
-      <NoteSheet v-model:show="aiOpen" title="图片识别" label="图片识别面板">
-        <view class="editor-sheet">
-          <view class="editor-ai-intro">
-            <view class="editor-ai-intro__icon" aria-hidden="true"><NoteIcon name="sparkles" size="42rpx" /></view>
-            <view class="editor-ai-intro__copy">
-              <text class="editor-ai-intro__title">从图片中提取内容</text>
-              <text class="editor-sheet__description">识别服务尚未连接，可先将图片添加到笔记。</text>
-            </view>
-          </view>
-          <view v-if="attachments.length" class="editor-sheet__images">
-            <button
-              v-for="(item, index) in attachments"
-              :key="item.key"
-              class="editor-sheet__image"
-              :aria-label="`预览第 ${index + 1} 张图片`"
-              @tap="previewAttachment(item)"
-            >
-              <image :src="attachmentUrl(item)" mode="aspectFit" :alt="`笔记图片 ${index + 1}`" />
-            </button>
-          </view>
-        </view>
-        <template #footer>
-          <view class="editor-sheet__actions">
-            <button
-              v-if="attachments.length < MAX_NOTE_IMAGES"
-              class="note-btn note-btn--secondary"
-              @tap="addImagesFromRecognition"
-            >
-              <NoteIcon name="image" size="32rpx" />
-              添加到笔记
-            </button>
-            <button class="note-btn note-btn--primary" @tap="aiOpen = false">完成</button>
-          </view>
-        </template>
-      </NoteSheet>
+
+      <NoteAssistant v-if="aiAvailable && !isEdit" v-model:show="aiOpen" action="split"
+        :day="dayKey(createdAt)" :default-time="formatTime(createdAt)" :seed="plainText"
+        :saving="saving" :save-error="aiError" @save="saveAi" />
 
       <NoteActionSheet
         v-model:show="imageSourceOpen"
         title="选择图片来源"
         :items="[
           { value: 'camera', label: '拍照', icon: 'camera' },
-          { value: 'album', label: '从手机相册选择', icon: 'image' }
+          {
+  value: 'album', label: '从手机相册选择', icon: 'image'
+}
         ]"
         @select="selectImageSource"
       />
       <NoteActionSheet
-        v-model:show="confirmOpen"
-        :title="confirmAction === 'delete' ? '删除笔记' : '放弃编辑？'"
-        :description="confirmAction === 'delete' ? '删除后无法恢复，确定删除这条笔记吗？' : '当前修改尚未保存。'"
-        :cancel-text="confirmAction === 'delete' ? '取消' : '继续编辑'"
-        :items="[{ value: 'confirm', label: confirmAction === 'delete' ? '删除这条笔记' : '放弃修改', icon: confirmAction === 'delete' ? 'trash' : 'close', danger: true }]"
+        :show="confirmOpen && confirmAction === 'delete'"
+        title="删除笔记？"
+        description="删除后无法恢复。"
+        :items="[{ value: 'confirm', label: '删除这条笔记', icon: 'trash', danger: true }]"
+        @update:show="confirmOpen = $event"
         @select="confirmEditorAction"
       />
 
-      <NoteSheet v-model:show="tagOpen" title="整理标签" label="为这条笔记添加或移除标签">
+      <NoteActionSheet
+        :show="confirmOpen && confirmAction === 'discard'"
+        title="退出编辑？"
+        :description="attachments.some(item => !original?.images.includes(item.objectPath)) ? '草稿只保存文字和标签，新添加的图片不会保留。' : '可以保留草稿，下次继续编辑。'"
+        cancel-text="继续编辑"
+        :items="[
+          ...(plainText.trim() || tags.length ? [{ value: 'draft', label: '保留草稿并退出', icon: 'journal' as const }] : []),
+          { value: 'confirm', label: '放弃修改', icon: 'trash', danger: true }
+        ]"
+        @update:show="confirmOpen = $event"
+        @select="$event === 'draft' ? keepDraftAndExit() : confirmEditorAction()"
+      />
+
+      <NoteSheet v-model:show="quickOpen" title="常用短语" label="选择或编辑常用短语">
         <view class="editor-sheet">
-          <text class="editor-sheet__description">为记录加上关键词，以后更容易找到。</text>
+          <text class="editor-sheet__description">点击插入，内容可继续修改。</text>
+          <view class="editor-phrase-list">
+            <view v-for="phrase in quickPhrases" :key="phrase" class="editor-phrase-row">
+              <button class="editor-phrase-insert" @tap="insertPhrase(phrase)">{{ phrase }}</button>
+              <button class="editor-tool" :aria-label="`移除短语 ${phrase}`" @tap="removePhrase(phrase)"><NoteIcon name="close" size="24rpx" /></button>
+            </view>
+          </view>
+          <view class="editor-tag-entry">
+            <wd-input v-model="phraseInput" aria-label="新增常用短语" placeholder="添加常用短语…" :maxlength="30" clearable confirm-type="done" @confirm="addPhrase" />
+            <wd-button :disabled="!phraseInput.trim() || quickPhrases.length >= 8" @click="addPhrase">添加</wd-button>
+          </view>
+        </view>
+      </NoteSheet>
+
+      <NoteSheet v-model:show="tagOpen" title="标签" label="为这条笔记添加或移除标签">
+        <view class="editor-sheet">
+          <text class="editor-sheet__description">用关键词整理记录，以后更容易查找。</text>
           <view class="editor-tag-entry">
             <wd-input
               v-model="tagInput"
-              placeholder="例如：生活、旅行、家人"
+              placeholder="输入标签名称…"
               :maxlength="MAX_TAG_LENGTH"
               clearable
               confirm-type="done"
@@ -821,13 +1049,12 @@ async function confirmEditorAction() {
               autocomplete="off"
               @confirm="addTag"
             >
-              <template #prefix><text class="editor-tag-entry__hash" aria-hidden="true">#</text></template>
             </wd-input>
             <wd-button type="primary" :disabled="!tagInput.trim()" @click="addTag">添加</wd-button>
           </view>
 
           <view v-if="suggestedTags.length" class="editor-suggestions">
-            <text class="editor-suggestions__title">快速添加</text>
+            <text class="editor-suggestions__title">常用标签</text>
             <view class="editor-suggestions__list">
               <button
                 v-for="tag in suggestedTags"
@@ -842,17 +1069,9 @@ async function confirmEditorAction() {
             </view>
           </view>
 
-          <text v-if="tags.length" class="editor-suggestions__title editor-selected-title">已添加 · {{ tags.length }}/{{ MAX_TAGS }}</text>
+          <text v-if="tags.length" class="editor-suggestions__title editor-selected-title">已选标签 · {{ tags.length }}/{{ MAX_TAGS }}</text>
           <view v-if="tags.length" class="editor-tags editor-tags--panel" aria-label="已添加的标签">
-            <view v-for="tag in tags" :key="tag" class="editor-tag">
-              <view class="editor-tag__label">
-                <NoteIcon name="tag" size="28rpx" />
-                <text class="editor-tag__text">{{ tag }}</text>
-              </view>
-              <button class="editor-tag__remove" :aria-label="`移除标签 ${tag}`" @tap="removeTag(tag)">
-                <NoteIcon name="close" size="28rpx" />
-              </button>
-            </view>
+            <NoteTag v-for="tag in tags" :key="tag" :label="tag" removable @remove="removeTag(tag)" />
           </view>
         </view>
         <template #footer>
@@ -864,6 +1083,83 @@ async function confirmEditorAction() {
 </template>
 
 <style scoped lang="scss">
+.editor-draft-status {
+  flex: 1;
+  color: var(--note-text-2);
+  font-size: var(--note-font-caption);
+  text-align: left;
+}
+.editor-draft-restored {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  color: var(--note-text-2);
+  font-size: var(--note-font-footnote);
+}
+.editor-draft-restored button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+.editor-draft-restored button::after {
+  border: 0;
+}
+.editor-quick-start {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  margin: 16rpx 0;
+}
+.editor-quick-start button {
+  min-height: 44px;
+  margin: 0;
+  padding: 0 20rpx;
+  border: 0;
+  border-radius: 12px;
+  background: var(--note-fill-2);
+  color: var(--note-text-2);
+  font-size: var(--note-font-subhead);
+  line-height: 44px;
+}
+.editor-quick-start button::after, .editor-phrase-insert::after {
+  border: 0;
+}
+.editor-quick-start button:active {
+  background: var(--note-accent-soft);
+  color: var(--note-accent);
+}
+.editor-phrase-list {
+  margin: 20rpx 0;
+}
+.editor-phrase-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1rpx solid var(--note-separator);
+}
+.editor-phrase-insert {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  padding: 16rpx 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: var(--note-text);
+  text-align: left;
+  font-size: var(--note-font-body);
+}
+.editor-phrase-insert:active {
+  color: var(--note-accent);
+}
+
 .editor-page {
   padding-bottom: calc(80px + var(--note-inset-bottom));
   background: var(--note-surface);
@@ -873,6 +1169,7 @@ async function confirmEditorAction() {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   min-height: 44px;
   max-width: 100%;
   overflow: hidden;
@@ -887,12 +1184,12 @@ async function confirmEditorAction() {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.editor-date-title::after { border: 0; }
-.editor-datetime-sheet { display: grid; gap: 12rpx; padding: 8rpx 32rpx 24rpx; }
-.editor-datetime-row { display: flex; align-items: center; gap: 16rpx; min-height: 58px; padding: 0 20rpx; border: 1rpx solid var(--note-separator); border-radius: var(--note-radius-md); color: var(--note-text-2); background: var(--note-surface-2); font-size: var(--note-font-body); }
-.editor-datetime-row text:nth-child(2) { margin-left: auto; color: var(--note-accent); font-variant-numeric: tabular-nums; }
-.editor-datetime-row .note-icon { color: var(--note-text-3); }
-
+.editor-date-title__label { overflow: hidden; text-overflow: ellipsis; }
+.editor-date-title__icon { opacity: .75; transform: rotate(90deg); }
+.editor-date-title:active { opacity: .7; }
+.editor-date-title::after {
+  border: 0;
+}
 :deep(.editor-page .note-navbar__title) {
   color: var(--note-accent);
   font-size: var(--note-font-title3);
@@ -900,7 +1197,7 @@ async function confirmEditorAction() {
   font-variant-numeric: tabular-nums;
 }
 
-:deep(.editor-nav-btn) {
+.editor-nav-btn {
   height: 88rpx;
   min-height: 44px;
   margin: 0;
@@ -910,8 +1207,16 @@ async function confirmEditorAction() {
   font-weight: 500;
 }
 
-:deep(.editor-nav-btn--save) {
-  font-weight: 700;
+.editor-nav-btn--save {
+  border: 0; background: transparent; line-height: 44px; font-weight: 700;
+}
+.editor-nav-btn--save:active:not([disabled]) { opacity: .6; }
+.editor-nav-btn--save::after {
+  border: 0;
+}
+.editor-nav-btn--save[disabled] {
+  color: var(--note-text-3);
+  background: transparent;
 }
 
 :deep(.editor-nav-btn .wd-button__content) {
@@ -932,19 +1237,17 @@ async function confirmEditorAction() {
   box-shadow: none;
 }
 
-.editor-richtext {
+.editor-richtext,
+.editor-richtext :deep(.ql-editor) {
   width: 100%;
-  min-height: 320rpx;
+  min-height: clamp(160px, 26vh, 260px);
   color: var(--note-text);
   font-size: var(--note-font-body);
   line-height: 1.6;
 }
 
 .editor-richtext :deep(.ql-editor) {
-  min-height: 320rpx;
   padding: 0;
-  font-size: var(--note-font-body);
-  line-height: 1.6;
   overflow-wrap: anywhere;
 }
 
@@ -971,7 +1274,6 @@ async function confirmEditorAction() {
   align-items: center;
   justify-content: flex-end;
   gap: 4rpx;
-  border-bottom: 1rpx solid var(--note-separator);
 }
 
 .editor-input-actions .editor-tool {
@@ -1008,74 +1310,6 @@ async function confirmEditorAction() {
   margin: 8rpx 0 16rpx;
 }
 
-.editor-tag {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  max-width: 100%;
-  min-height: 44px;
-  padding-left: 12px;
-  color: var(--note-accent);
-  font-size: var(--note-font-subhead);
-  font-weight: 600;
-}
-
-.editor-tag::before {
-  content: '';
-  position: absolute;
-  inset: 6px 0;
-  border-radius: 999px;
-  background: var(--note-accent-soft);
-}
-
-.editor-tag__label {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  line-height: 1;
-}
-
-.editor-tag__label :deep(.note-icon) {
-  align-self: center;
-  transform: translateY(-1rpx);
-}
-
-.editor-tag__text {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1.2;
-}
-
-.editor-tag__remove {
-  position: relative;
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  color: var(--note-accent);
-  background: transparent;
-}
-
-.editor-tag__remove::after {
-  border: 0;
-}
-
-.editor-tag__remove:active {
-  opacity: 0.65;
-}
-
 .editor-tag-entry {
   display: flex;
   align-items: center;
@@ -1096,13 +1330,6 @@ async function confirmEditorAction() {
   min-height: 48px;
   padding: 0 28rpx;
   border-radius: var(--note-radius-md);
-}
-
-.editor-tag-entry__hash {
-  margin-right: 12rpx;
-  color: var(--note-accent);
-  font-size: var(--note-font-title3);
-  font-weight: 700;
 }
 
 .editor-media__item {
@@ -1321,7 +1548,9 @@ async function confirmEditorAction() {
   font-weight: 700;
 }
 
-.editor-voice__stop::after { border: 0; }
+.editor-voice__stop::after {
+  border: 0;
+}
 
 .editor-sheet {
   padding: 8rpx 32rpx 24rpx;
@@ -1334,68 +1563,6 @@ async function confirmEditorAction() {
   line-height: 1.55;
 }
 
-.editor-ai-intro {
-  display: flex;
-  align-items: flex-start;
-  gap: 20rpx;
-  padding: 20rpx;
-  border-radius: var(--note-radius-lg);
-  background: var(--note-fill-2);
-}
-
-.editor-ai-intro__icon {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 80rpx;
-  height: 80rpx;
-  border-radius: var(--note-radius-md);
-  color: var(--note-accent);
-  background: var(--note-accent-soft);
-}
-
-.editor-ai-intro__copy { min-width: 0; }
-.editor-ai-intro__title {
-  display: block;
-  margin-bottom: 8rpx;
-  color: var(--note-text);
-  font-size: var(--note-font-subhead);
-  font-weight: 700;
-}
-
-.editor-sheet__images {
-  display: flex;
-  gap: 16rpx;
-  margin-top: 24rpx;
-  overflow-x: auto;
-}
-
-.editor-sheet__image {
-  flex: none;
-  width: 144rpx;
-  height: 144rpx;
-  min-width: 72px;
-  min-height: 72px;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  border: 0;
-  border-radius: var(--note-radius-md);
-  background: var(--note-fill-2);
-}
-
-.editor-sheet__image image {
-  width: 100%;
-  height: 100%;
-}
-
-.editor-sheet__actions {
-  display: flex;
-  gap: 16rpx;
-}
-
-.editor-sheet__actions .note-btn,
 .editor-sheet__done {
   flex: 1;
   width: 100%;
@@ -1413,7 +1580,11 @@ async function confirmEditorAction() {
   font-weight: 600;
 }
 
-.editor-selected-title { margin-top: 20rpx; margin-bottom: 6rpx; font-size: var(--note-font-footnote); }
+.editor-selected-title {
+  margin-top: 20rpx;
+  margin-bottom: 6rpx;
+  font-size: var(--note-font-footnote);
+}
 
 .editor-suggestions__list {
   display: flex;
@@ -1422,40 +1593,23 @@ async function confirmEditorAction() {
 }
 
 .editor-suggestion {
-  position: relative;
-  z-index: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8rpx;
   min-height: 44px;
   margin: 0;
-  padding: 0 24rpx;
-  border: 0;
-  color: var(--note-text-2);
-  background: transparent;
-  font-size: var(--note-font-footnote);
-  line-height: 1.2;
-}
-
-.editor-suggestion::before {
-  content: '';
-  position: absolute;
-  inset: 6px 0;
-  z-index: -1;
+  padding: 0 16px;
   border: 1rpx solid var(--note-separator);
-  border-radius: 999px;
-  background: var(--note-surface);
+  border-radius: 12px;
+  color: var(--note-text-2);
+  background: var(--note-fill-2);
+  font-size: var(--note-font-subhead);
+  line-height: 1.3;
+  transition: color var(--note-duration-fast) var(--note-ease), background-color var(--note-duration-fast) var(--note-ease);
 }
-
-.editor-suggestion::after {
-  border: 0;
-}
-
-.editor-suggestion:active {
-  color: var(--note-accent);
-  background: var(--note-accent-soft);
-}
+.editor-suggestion::after { border: 0; }
+.editor-suggestion:active { color: var(--note-accent); background: var(--note-accent-soft); }
 
 .editor-emoji {
   position: fixed;

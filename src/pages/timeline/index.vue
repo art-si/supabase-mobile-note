@@ -4,14 +4,16 @@ import { onBackPress, onLoad, onPageScroll, onPullDownRefresh, onReachBottom, on
 import NoteCalendar from '@/components/common/NoteCalendar.vue'
 import NoteEmpty from '@/components/common/NoteEmpty.vue'
 import NoteIcon from '@/components/common/NoteIcon.vue'
-import NoteActionSheet from '@/components/common/NoteActionSheet.vue'
-import NoteSwipeRow from '@/components/common/NoteSwipeRow.vue'
+import NoteTag from '@/components/common/NoteTag.vue'
+import NoteWeather from '@/components/common/NoteWeather.vue'
 import NoteTabBar from '@/components/common/NoteTabBar.vue'
-import NoteUndoBar from '@/components/common/NoteUndoBar.vue'
+import NoteAssistant from '@/components/common/NoteAssistant.vue'
+import { useNoteAssistant } from '@/composables/useNoteAssistant'
 import { usePageTheme } from '@/composables/usePageTheme'
-import { useAuthStore } from '@/stores/auth'
+import { CLOUD_ACCESS_DENIED, useAuthStore } from '@/stores/auth'
 import { useNotesStore } from '@/stores/notes'
 import { useStorageModeStore } from '@/stores/storageMode'
+import { useWeatherStore } from '@/stores/weather'
 import type { Note } from '@/api/types'
 import { WEEKDAY_SHORT, dayKey, formatDayKey, formatTime, monthKey, parseDayKey, todayKey } from '@/utils/format'
 import { haptic } from '@/utils/haptic'
@@ -23,6 +25,11 @@ const { themeName, themeClass, isDark } = usePageTheme()
 const auth = useAuthStore()
 const store = useNotesStore()
 const storage = useStorageModeStore()
+const { available: aiAvailable } = useNoteAssistant()
+const aiOpen = ref(false)
+const aiAction = ref<'summary' | 'search'>('summary')
+const weather = useWeatherStore()
+const weatherShow = ref(false)
 const { top: statusInset, bottom: safeBottom } = getSystemInsets()
 
 const STRIP_DAYS = 21
@@ -31,16 +38,12 @@ const SEARCH_DEBOUNCE = 280
 const booted = ref(false)
 const scrolled = ref(false)
 const calendarShow = ref(false)
-const timelineMenuOpen = ref(false)
-const rowMenuOpen = ref(false)
-const selectedMenuNote = ref<Note | null>(null)
 const searchOpen = ref(false)
 const searchFocus = ref(false)
 const searchInput = ref('')
-const swipedKey = ref('')
-const undoToken = ref(0)
 const dayCounts = ref<Record<string, number>>({})
 const today = todayKey()
+const dayBeforeSearch = ref(store.selectedDay || today)
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -88,9 +91,8 @@ const heroTitle = computed(() => {
 })
 const heroEyebrow = computed(() => {
   const base = selectedDate.value ?? new Date()
-  return `${base.getFullYear()}年${base.getMonth() + 1}月 · 周${WEEKDAY_SHORT[base.getDay()]}`
+  return `${base.getFullYear()}年 · 周${WEEKDAY_SHORT[base.getDay()]}`
 })
-const heroYear = computed(() => (selectedDate.value ?? new Date()).getFullYear())
 
 const currentMonthPrefix = computed(() => {
   const now = new Date()
@@ -157,7 +159,13 @@ watch([() => store.selectedDay, searchOpen], () => {
   if (!searchOpen.value) void alignDateStrip()
 })
 
-const showSkeleton = computed(() => store.activeLoading && store.activeNotes.length === 0)
+const showSkeleton = computed(() => store.activeLoading)
+const cloudDenied = computed(() => storage.mode === 'cloud' && auth.cloudAccessDenied)
+watch(cloudDenied, (denied) => {
+  if (!denied) return
+  store.reset()
+  dayCounts.value = {}
+})
 const showError = computed(() => Boolean(store.activeError) && store.activeNotes.length === 0)
 const showEmpty = computed(() => !store.activeLoading && !store.activeError && store.activeNotes.length === 0)
 const emptyIcon = computed(() => (store.keyword ? 'search' : store.selectedDay ? 'calendar' : 'journal'))
@@ -167,13 +175,13 @@ const emptyTitle = computed(() => {
   return '开始记录你的时间轴'
 })
 const emptyDesc = computed(() => {
-  if (store.keyword) return '换个关键词，或清空搜索查看全部记录'
-  if (store.selectedDay) return '换个日期看看，或回到全部时间轴'
+  if (store.keyword) return '换个关键词，或清空搜索回到今天'
+  if (store.selectedDay) return '点 + 记录这一天，或用日历选择其他日期'
   return '点下方的 + 写下此刻的想法，时间轴会替你收好'
 })
 const emptyAction = computed(() => {
   if (store.keyword) return '清空搜索'
-  if (store.selectedDay) return '查看全部'
+  if (store.selectedDay) return '写一条'
   return '写第一条'
 })
 
@@ -192,25 +200,39 @@ async function loadCounts() {
 }
 
 onLoad(async () => {
-  await storage.initialize()
+  const initialization = storage.initialize()
+  if (storage.mode === 'cloud') await initialization
   const valid = await auth.ensureValidSession()
   if (!valid) return
   try {
-    await store.load()
+    await store.selectDay(store.selectedDay || today)
   } catch {
     // 错误态由页面展示
+  }
+  if (store.keyword) {
+    searchInput.value = store.keyword
+    searchOpen.value = true
+    await store.selectDay('')
+    await store.load().catch(() => {})
   }
   booted.value = true
   void loadCounts()
 })
 
 onShow(() => {
+  void weather.refresh()
   if (!booted.value) return
-  void store
-    .refreshActive()
-    .then(() => loadCounts())
-    .catch(() => {})
+  void refreshTimeline()
 })
+
+async function refreshTimeline() {
+  try {
+    await store.refreshActive()
+    await loadCounts()
+  } catch {
+    // 错误态由页面展示，已有记录在刷新失败时继续保留。
+  }
+}
 
 onUnload(() => {
   if (searchTimer) clearTimeout(searchTimer)
@@ -246,41 +268,32 @@ onReachBottom(() => {
 })
 
 onBackPress(() => {
-  if (rowMenuOpen.value) { rowMenuOpen.value = false; return true }
-  if (timelineMenuOpen.value) { timelineMenuOpen.value = false; return true }
-  if (calendarShow.value) { calendarShow.value = false; return true }
+  if (aiOpen.value) { aiOpen.value = false; return true }
+  if (weatherShow.value) { weatherShow.value = false; return true }
+  if (calendarShow.value) {
+    calendarShow.value = false
+    return true
+  }
+  if (searchOpen.value) {
+    closeSearch()
+    return true
+  }
   return false
 })
 
-function openMenu() {
-  timelineMenuOpen.value = true
-}
-
-function runTimelineAction(action: string) {
-  timelineMenuOpen.value = false
-  if (action === 'refresh') {
-    void store
-      .refreshActive()
-      .then(() => loadCounts())
-      .catch(() => {})
-  } else if (action === 'calendar') {
-    void nextTick(() => { calendarShow.value = true })
-  } else if (action === 'all') {
-    clearFilters()
-  }
-}
-
 function openSearch() {
+  dayBeforeSearch.value = store.selectedDay || today
   searchOpen.value = true
   searchFocus.value = true
 }
 
-function closeSearch() {
+function closeSearch(restoreDay = true) {
   searchOpen.value = false
   searchFocus.value = false
   if (searchTimer) clearTimeout(searchTimer)
   searchInput.value = ''
-  if (store.keyword) void store.search('').catch(() => {})
+  store.keyword = ''
+  if (restoreDay) void store.selectDay(dayBeforeSearch.value).catch(() => {})
 }
 
 watch(searchInput, (value) => {
@@ -304,8 +317,8 @@ function clearSearchKeyword() {
 }
 
 function clearFilters() {
-  if (searchOpen.value) closeSearch()
-  void store.selectDay('')
+  if (searchOpen.value) { closeSearch(); return }
+  void store.selectDay(today).catch(() => {})
   uni.pageScrollTo({ scrollTop: 0, duration: prefersReducedMotion() ? 0 : 300 })
 }
 
@@ -318,61 +331,35 @@ function retry() {
 }
 
 function onSelectDay(day: string) {
-  if (searchOpen.value) closeSearch()
+  if (searchOpen.value) closeSearch(false)
   void store.selectDay(day).catch(() => {})
   uni.pageScrollTo({ scrollTop: 0, duration: prefersReducedMotion() ? 0 : 300 })
 }
 
 function onStripPick(item: StripDay) {
   haptic('light')
-  onSelectDay(store.selectedDay === item.key ? '' : item.key)
+  onSelectDay(item.key)
 }
 
 function openEditor(note?: Note) {
-  swipedKey.value = ''
-  uni.navigateTo({ url: note ? `/pages/editor/index?id=${note.id}` : '/pages/editor/index' })
+  uni.navigateTo({ url: note ? `/pages/editor/index?id=${note.id}` : `/pages/editor/index${store.selectedDay ? `?day=${store.selectedDay}` : ''}` })
+}
+
+function openAi(action: 'summary' | 'search') {
+  if (!aiAvailable.value) return
+  searchFocus.value = false
+  uni.hideKeyboard()
+  aiAction.value = action
+  aiOpen.value = true
+}
+
+function openAiSource(id: string) {
+  aiOpen.value = false
+  uni.navigateTo({ url: `/pages/editor/index?id=${encodeURIComponent(id)}` })
 }
 
 function noteText(note: Note) {
   return (note.contentText ?? '').trim()
-}
-
-function requestDelete(note: Note) {
-  haptic('warning')
-  swipedKey.value = ''
-  if (!store.removeWithUndo(note.id)) return
-  undoToken.value += 1
-}
-
-function undoDelete() {
-  if (!store.undoRemoval()) return
-  haptic('success')
-  uni.showToast({ title: '已恢复', icon: 'none' })
-}
-
-function openRowMenu(note: Note) {
-  swipedKey.value = ''
-  selectedMenuNote.value = note
-  rowMenuOpen.value = true
-}
-
-function editSelectedNote() {
-  const note = selectedMenuNote.value
-  rowMenuOpen.value = false
-  selectedMenuNote.value = null
-  if (note) openEditor(note)
-}
-
-function deleteSelectedNote() {
-  const note = selectedMenuNote.value
-  rowMenuOpen.value = false
-  selectedMenuNote.value = null
-  if (note) requestDelete(note)
-}
-
-function runRowAction(action: string) {
-  if (action === 'edit') editSelectedNote()
-  else if (action === 'delete') deleteSelectedNote()
 }
 
 function previewNoteImage(note: Note, index: number) {
@@ -390,13 +377,17 @@ function previewNoteImage(note: Note, index: number) {
   <wd-config-provider :theme="themeName">
     <view
       class="page tl-page"
-      :class="[themeClass, { 'note-dark': isDark, 'tl-page--search': searchOpen }]"
+      :class="[themeClass, { 'note-dark': isDark, 'tl-page--search': searchOpen, 'tl-page--ai-search': searchOpen && aiAvailable }]"
       :style="{ '--note-safe-bottom': `${safeBottom}px`, '--note-status-inset': `${statusInset}px` }"
     >
       <view class="tl-nav note-material--thick" :class="{ 'tl-nav--edge': scrolled || searchOpen }">
-        <text class="tl-nav__title" :class="{ 'tl-nav__title--on': scrolled || searchOpen }">
-          {{ navTitle }}
-        </text>
+        <button v-if="!scrolled && !searchOpen" class="weather-trigger" :aria-label="`${weather.city?.name || '当前位置'}今日天气：${weather.headerLabel}${weather.fresh && weather.error ? '，缓存' : ''}，查看详情`" @tap="weatherShow = true">
+          <NoteIcon :name="weather.icon" size="36rpx" />
+          <text v-if="store.selectedDay !== today && weather.fresh" class="weather-trigger__meta">今日</text>
+          <text class="weather-trigger__label" :class="{ 'weather-trigger__label--report': weather.fresh }">{{ weather.headerLabel }}</text>
+          <text v-if="weather.fresh && weather.error" class="weather-trigger__meta">缓存</text>
+        </button>
+        <text v-else class="tl-nav__title">{{ navTitle }}</text>
         <view class="tl-nav__actions">
           <button
             class="tl-icon-btn"
@@ -414,13 +405,13 @@ function previewNoteImage(note: Note, index: number) {
           >
             <NoteIcon name="search" size="40rpx" />
           </button>
-          <button class="tl-icon-btn" aria-label="更多操作" @tap="openMenu">
-            <NoteIcon name="more" size="40rpx" />
+          <button class="tl-icon-btn" aria-label="刷新记录" :disabled="store.activeLoading" @tap="refreshTimeline">
+            <NoteIcon name="refresh" size="40rpx" />
           </button>
         </view>
       </view>
 
-      <view v-if="searchOpen" class="tl-searchbar note-material--thick">
+      <view v-if="searchOpen" class="tl-searchbar note-material--thick" :class="{ 'tl-searchbar--ai': aiAvailable }">
         <view class="note-field tl-searchbar__field">
           <NoteIcon name="search" size="32rpx" class="note-field__icon" />
           <input
@@ -443,27 +434,22 @@ function previewNoteImage(note: Note, index: number) {
           </button>
         </view>
         <button class="tl-searchbar__cancel" @tap="closeSearch">取消</button>
+        <button v-if="aiAvailable" class="tl-ai-link tl-ai-link--search" @tap="openAi('search')">
+          <NoteIcon name="sparkles" size="30rpx" /><text>智能搜索</text>
+        </button>
       </view>
 
       <view class="tl-body">
         <view v-if="!searchOpen" class="tl-hero">
-          <text class="tl-hero__year" aria-hidden="true">{{ heroYear }}</text>
           <text class="tl-hero__eyebrow">{{ heroEyebrow }}</text>
           <text class="tl-hero__title">{{ heroTitle }}</text>
-          <text class="tl-hero__meta">{{ heroMeta }}</text>
+          <view class="tl-hero__detail">
+            <text class="tl-hero__meta" :class="{ 'tl-hero__meta--paired': aiAvailable && store.dayNotes.length && !store.activeLoading }">{{ heroMeta }}</text>
+            <button v-if="aiAvailable && store.dayNotes.length && !store.activeLoading" class="tl-ai-link" @tap="openAi('summary')">当天小结</button>
+          </view>
         </view>
 
         <view v-if="!searchOpen" class="tl-strip">
-          <button
-            class="tl-strip__all"
-            :class="{ 'tl-strip__all--on': !store.selectedDay }"
-            :aria-pressed="!store.selectedDay"
-            aria-label="查看全部时间的笔记"
-            @tap="onSelectDay('')"
-          >
-            <NoteIcon name="timeline" size="34rpx" />
-            <text class="tl-strip__all-text">全部</text>
-          </button>
           <scroll-view
             class="tl-strip__scroll"
             scroll-x
@@ -494,7 +480,7 @@ function previewNoteImage(note: Note, index: number) {
           </scroll-view>
         </view>
 
-        <view v-if="store.selectedDay || store.keyword" class="tl-filter">
+        <view v-if="store.keyword" class="tl-filter">
           <NoteIcon :name="store.keyword ? 'search' : 'calendar'" size="28rpx" class="tl-filter__icon" />
           <text class="tl-filter__text">
             {{ store.keyword ? `关键词「${store.keyword}」` : formatDayKey(store.selectedDay) }}
@@ -504,7 +490,16 @@ function previewNoteImage(note: Note, index: number) {
           </button>
         </view>
 
-        <view v-if="showSkeleton" class="tl-skeleton" aria-label="加载中" aria-busy="true">
+        <NoteEmpty
+          v-if="cloudDenied"
+          icon="warning"
+          title="云端存储不可用"
+          :description="CLOUD_ACCESS_DENIED"
+          action-text="重新检查授权"
+          @action="refreshTimeline"
+        />
+
+        <view v-else-if="showSkeleton" class="tl-skeleton" aria-label="加载中" aria-busy="true">
           <view v-for="index in 4" :key="index" class="tl-skeleton__row">
             <view class="tl-skeleton__dot" />
             <view class="tl-skeleton__card">
@@ -530,12 +525,12 @@ function previewNoteImage(note: Note, index: number) {
           :title="emptyTitle"
           :description="emptyDesc"
           :action-text="emptyAction"
-          @action="store.keyword || store.selectedDay ? clearFilters() : openEditor()"
+          @action="store.keyword ? clearFilters() : openEditor()"
         />
 
         <template v-else>
           <view v-for="group in store.activeGroups" :key="group.key" class="tl-day">
-            <view class="tl-day__head note-material">
+            <view v-if="!store.selectedDay" class="tl-day__head note-material">
               <text class="tl-day__label">{{ group.label }}</text>
               <text class="tl-day__date">{{ formatDayKey(group.key) }}</text>
               <text class="tl-day__count">{{ group.notes.length }} 条</text>
@@ -544,70 +539,55 @@ function previewNoteImage(note: Note, index: number) {
             <view class="tl-day__list">
               <view v-for="note in group.notes" :key="note.id" class="tl-entry">
                 <view class="tl-entry__rail" aria-hidden="true">
-                  <view class="tl-entry__dot" />
+                  <text class="tl-entry__time">{{ formatTime(note.createdAt) }}</text>
                 </view>
-                <NoteSwipeRow
-                  class="tl-entry__swipe"
-                  :row-key="note.id"
-                  :active-key="swipedKey"
-                  :label="`删除 ${formatTime(note.createdAt)} 的笔记`"
-                  :press-label="`编辑 ${formatTime(note.createdAt)} 的笔记，左右方向键可展开或收起删除操作`"
-                  @open="swipedKey = $event"
-                  @press="openEditor(note)"
-                  @remove="requestDelete(note)"
-                >
-                  <view class="tl-card">
-                    <view class="tl-card__head">
-                      <text class="tl-card__time">{{ formatTime(note.createdAt) }}</text>
-                      <button
-                        class="tl-card__more"
-                        :aria-label="`${formatTime(note.createdAt)} 笔记的更多操作`"
-                        @tap.stop="openRowMenu(note)"
-                      >
-                        <NoteIcon name="more" size="32rpx" />
-                      </button>
-                    </view>
-
+                <view class="tl-card">
+                  <button
+                    class="tl-card__open"
+                    :aria-label="`编辑 ${formatTime(note.createdAt)} 的笔记：${noteText(note).slice(0, 80) || '图片笔记'}`"
+                    @tap="openEditor(note)"
+                    @keydown.enter.prevent="openEditor(note)"
+                    @keydown.space.prevent="openEditor(note)"
+                  >
                     <rich-text
                       v-if="noteText(note)"
                       class="tl-card__rich"
                       :nodes="renderNoteHtml(note.content)"
                     />
-                    <text v-else class="tl-card__blank">这条笔记只有图片</text>
-
+                    <text v-else class="tl-card__photo-label">图片笔记</text>
                     <view v-if="note.tags?.length" class="tl-card__tags">
-                      <text v-for="tag in note.tags" :key="tag" class="note-chip tl-card__tag">
-                        #{{ tag }}
-                      </text>
+                      <NoteTag v-for="tag in note.tags" :key="tag" :label="tag" />
                     </view>
+                  </button>
 
-                    <view
-                      v-if="note.images.length"
-                      class="tl-media"
-                      :class="{ 'tl-media--single': note.images.length === 1 }"
+                  <view
+                    v-if="note.images.length"
+                    class="tl-media"
+                    :class="{ 'tl-media--single': note.images.length === 1 }"
+                  >
+                    <button
+                      v-for="(path, imageIndex) in note.images"
+                      :key="path"
+                      class="tl-media__item"
+                      :aria-label="`查看第 ${imageIndex + 1} 张图片`"
+                      @tap.stop="previewNoteImage(note, imageIndex)"
+                      @keydown.enter.stop.prevent="previewNoteImage(note, imageIndex)"
+                      @keydown.space.stop.prevent="previewNoteImage(note, imageIndex)"
                     >
-                      <button
-                        v-for="(path, imageIndex) in note.images"
-                        :key="path"
-                        class="tl-media__item"
-                        :aria-label="`查看第 ${imageIndex + 1} 张图片`"
-                        @tap.stop="previewNoteImage(note, imageIndex)"
-                      >
-                        <image
-                          v-if="store.imageUrl(path)"
-                          class="tl-media__img"
-                          :src="store.imageUrl(path)"
-                          mode="aspectFit"
-                          :alt="`${formatDayKey(group.key)} 笔记的第 ${imageIndex + 1} 张图片`"
-                          lazy-load
-                        />
-                        <view v-else class="tl-media__placeholder">
-                          <NoteIcon name="image" size="40rpx" />
-                        </view>
-                      </button>
-                    </view>
+                      <image
+                        v-if="store.imageUrl(path)"
+                        class="tl-media__img"
+                        :src="store.imageUrl(path)"
+                        mode="widthFix"
+                        :alt="`${formatDayKey(group.key)} 笔记的第 ${imageIndex + 1} 张图片`"
+                        lazy-load
+                      />
+                      <view v-else class="tl-media__placeholder">
+                        <NoteIcon name="image" size="40rpx" />
+                      </view>
+                    </button>
                   </view>
-                </NoteSwipeRow>
+                </view>
               </view>
             </view>
           </view>
@@ -620,38 +600,13 @@ function previewNoteImage(note: Note, index: number) {
         </template>
       </view>
 
+      <NoteWeather v-model:show="weatherShow" />
+      <NoteAssistant v-if="aiAvailable" v-model:show="aiOpen" :action="aiAction"
+        :day="store.selectedDay || dayBeforeSearch" :seed="searchInput" @source="openAiSource" />
       <NoteCalendar
         v-model:show="calendarShow"
         :selected-day="store.selectedDay"
         @select="onSelectDay"
-        @clear="clearFilters"
-      />
-
-      <NoteActionSheet
-        v-model:show="timelineMenuOpen"
-        title="时间轴"
-        :items="[
-          { value: 'refresh', label: '刷新记录', icon: 'refresh' },
-          { value: 'calendar', label: '按日期查看', icon: 'calendar' },
-          { value: 'all', label: '查看全部记录', icon: 'timeline' }
-        ]"
-        @select="runTimelineAction"
-      />
-      <NoteActionSheet
-        v-model:show="rowMenuOpen"
-        title="笔记操作"
-        :items="[
-          { value: 'edit', label: '编辑这条笔记', icon: 'edit' },
-          { value: 'delete', label: '删除这条笔记', icon: 'trash', danger: true }
-        ]"
-        @select="runRowAction"
-      />
-
-      <NoteUndoBar
-        :show="Boolean(store.pendingRemoval)"
-        :token="undoToken"
-        message="已删除 1 条笔记"
-        @undo="undoDelete"
       />
 
       <NoteTabBar active="timeline" />
@@ -660,18 +615,50 @@ function previewNoteImage(note: Note, index: number) {
 </template>
 
 <style scoped lang="scss">
+.tl-hero__detail { display: flex; align-items: center; gap: 12px; }
+.tl-hero__detail .tl-hero__meta--paired { margin-top: 0; }
+.tl-ai-link { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 4px; margin: 0; border: 0; background: transparent; color: var(--note-accent); font-size: var(--note-font-footnote); }
+.tl-ai-link::after { border: 0; }
+.tl-ai-link:active { opacity: .6; }
+.tl-ai-link--search { flex: 0 0 100%; justify-content: flex-start; padding: 0; }
+.weather-trigger {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  min-height: 44px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: var(--note-text-2);
+  font-size: var(--note-font-subhead);
+  text-align: left;
+}
+.weather-trigger::after { border: 0; }
+.weather-trigger:active { opacity: 0.6; }
+.weather-trigger__label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.weather-trigger__label--report { color: var(--note-text); font-weight: 600; }
+.weather-trigger__meta { flex: none; white-space: nowrap; font-size: var(--note-font-caption); }
+.weather-trigger, .tl-nav__title { animation: tl-nav-label-in var(--note-duration-fast) ease-out; }
+@keyframes tl-nav-label-in { from { opacity: 0; } to { opacity: 1; } }
 .tl-page {
   --tl-header-h: calc(44px + var(--note-inset-top));
   --tl-nav-h: var(--tl-header-h);
-  --tl-rail-x: 28rpx;
+  --tl-rail-x: 48rpx;
   --tl-gutter: max(32rpx, 16px);
 
   padding-bottom: calc(var(--note-tabbar-height) + var(--note-inset-bottom) + 40rpx);
-  background: var(--note-bg);
+  background: var(--note-surface);
 }
 
 .tl-page--search {
   --tl-nav-h: calc(var(--tl-header-h) + max(112rpx, 56px));
+}
+
+.tl-page--ai-search {
+  --tl-nav-h: calc(var(--tl-header-h) + max(112rpx, 56px) + 44px);
 }
 
 .tl-nav {
@@ -714,16 +701,6 @@ function previewNoteImage(note: Note, index: number) {
   font-size: var(--note-font-body);
   font-weight: 700;
   letter-spacing: var(--note-track-title);
-  opacity: 0;
-  transform: translate3d(0, 12rpx, 0);
-  transition:
-    opacity var(--note-duration) var(--note-ease),
-    transform var(--note-duration) var(--note-ease);
-}
-
-.tl-nav__title--on {
-  opacity: 1;
-  transform: translate3d(0, 0, 0);
 }
 
 .tl-nav__actions {
@@ -757,13 +734,11 @@ function previewNoteImage(note: Note, index: number) {
 }
 
 .tl-icon-btn--on {
-  background: var(--note-accent-soft);
+  color: var(--note-accent);
 }
 
 .tl-icon-btn::after,
-.tl-strip__all::after,
 .tl-strip__day::after,
-.tl-card__more::after,
 .tl-media__item::after,
 .tl-searchbar__clear::after,
 .tl-searchbar__cancel::after,
@@ -782,6 +757,13 @@ function previewNoteImage(note: Note, index: number) {
   gap: 12rpx;
   height: max(112rpx, 56px);
   padding: 0 var(--tl-gutter) 12rpx;
+}
+
+.tl-searchbar--ai {
+  flex-wrap: wrap;
+  row-gap: 0;
+  height: calc(max(112rpx, 56px) + 44px);
+  padding-bottom: 0;
 }
 
 .tl-searchbar__field {
@@ -844,28 +826,15 @@ function previewNoteImage(note: Note, index: number) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 32rpx var(--tl-gutter) 36rpx;
-  background: radial-gradient(ellipse at 100% 0%, rgba(var(--note-accent-rgb), 0.1), transparent 70%);
-}
-
-.tl-hero__year {
-  position: absolute;
-  right: 16rpx;
-  top: 8rpx;
-  color: var(--note-accent);
-  opacity: 0.08;
-  font-size: 170rpx;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: -6rpx;
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
+  padding: 34rpx var(--tl-gutter) 28rpx;
+  background: radial-gradient(ellipse at 92% 12%, rgba(var(--note-accent-rgb), .13), transparent 67%);
 }
 
 .tl-hero__eyebrow,
 .tl-hero__title,
 .tl-hero__meta {
   position: relative;
+  z-index: 1;
 }
 
 
@@ -901,37 +870,6 @@ function previewNoteImage(note: Note, index: number) {
   padding: 0 var(--tl-gutter) 24rpx;
 }
 
-.tl-strip__all {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6rpx;
-  width: 96rpx;
-  height: 116rpx;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 24rpx;
-  color: var(--note-text-2);
-  background: var(--note-fill-2);
-  transition:
-    color var(--note-duration-fast) var(--note-ease),
-    background-color var(--note-duration-fast) var(--note-ease);
-}
-
-.tl-strip__all--on {
-  color: var(--note-accent);
-  background: var(--note-accent-soft);
-}
-
-.tl-strip__all-text {
-  font-size: var(--note-font-caption);
-  font-weight: 600;
-  line-height: 1.2;
-}
-
 .tl-strip__scroll {
   flex: 1;
   min-width: 0;
@@ -957,9 +895,9 @@ function previewNoteImage(note: Note, index: number) {
   margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 24rpx;
-  background: var(--note-surface);
-  box-shadow: var(--note-shadow-sm);
+  border-radius: 20rpx;
+  background: var(--note-fill-2);
+  box-shadow: none;
   transition:
     background-color var(--note-duration-fast) var(--note-ease),
     transform var(--note-duration-fast) var(--note-ease);
@@ -977,8 +915,7 @@ function previewNoteImage(note: Note, index: number) {
 }
 
 .tl-strip__day--weekend .tl-strip__weekday {
-  color: var(--note-mood-memorial);
-  opacity: 0.75;
+  color: var(--note-danger);
 }
 
 .tl-strip__num {
@@ -1011,8 +948,8 @@ function previewNoteImage(note: Note, index: number) {
 
 .tl-strip__day--on,
 .tl-strip__day--on:active {
-  background: var(--note-accent);
-  box-shadow: var(--note-shadow-accent);
+  background: var(--note-accent-finish);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .23);
 }
 
 .tl-strip__day--on .tl-strip__weekday,
@@ -1110,107 +1047,59 @@ function previewNoteImage(note: Note, index: number) {
 
 .tl-day__list {
   position: relative;
-  padding: 16rpx var(--tl-gutter) 12rpx;
-}
-
-/* 连续轨道线，把一天里的记录串成一条时间轴。 */
-.tl-day__list::before {
-  content: '';
-  position: absolute;
-  top: 24rpx;
-  bottom: 24rpx;
-  left: calc(var(--tl-gutter) + var(--tl-rail-x));
-  width: 2rpx;
-  transform: translateX(-50%);
-  border-radius: 2rpx;
-  background: var(--note-separator);
+  padding: 24rpx var(--tl-gutter) 12rpx;
 }
 
 .tl-entry {
+  position: relative;
   display: grid;
-  grid-template-columns: 56rpx minmax(0, 1fr);
+  grid-template-columns: 96rpx minmax(0, 1fr);
+  column-gap: 24rpx;
   align-items: start;
-  padding-bottom: 20rpx;
+  padding-bottom: 36rpx;
+  min-height: 92rpx;
 }
-
 .tl-entry__rail {
   position: relative;
   align-self: stretch;
 }
-
-.tl-entry__dot {
-  position: absolute;
-  top: 34rpx;
-  left: var(--tl-rail-x);
-  width: 16rpx;
-  height: 16rpx;
-  transform: translateX(-50%);
-  border-radius: 50%;
-  background: var(--note-accent);
-  box-shadow: 0 0 0 6rpx var(--note-bg);
-  transition: background-color var(--note-duration) var(--note-ease);
+.tl-entry__rail::after {
+  content: ''; position: absolute; top: 72rpx; bottom: -20rpx;
+  left: 50%; width: 3rpx; transform: translateX(-50%); background: var(--note-accent);
 }
-
-.tl-entry__swipe {
+.tl-entry:last-child .tl-entry__rail::after {
+  display: none;
+}
+.tl-entry__time {
+  display: block; position: relative; padding: 8rpx 0; border-radius: 12rpx;
+  text-align: center; font-size: var(--note-font-subhead); line-height: 1.5;
+  font-variant-numeric: tabular-nums; color: var(--note-text); background: var(--note-fill);
+}
+.tl-card {
   min-width: 0;
 }
-
-.tl-card {
-  padding: 24rpx 28rpx 28rpx;
-  border: 1rpx solid var(--note-separator);
-  border-radius: 28rpx;
-  background: var(--note-surface);
-  box-shadow: var(--note-shadow-sm);
-  transition: background-color var(--note-duration-fast) var(--note-ease);
-}
-
-.tl-entry__swipe:active .tl-card {
-  background: var(--note-surface-2);
-}
-
-.tl-card__head {
-  display: flex;
-  align-items: center;
-  gap: 12rpx;
-  margin-bottom: 12rpx;
-}
-
-.tl-card__time {
-  flex: none;
-  color: var(--note-accent);
-  font-size: var(--note-font-subhead);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: var(--note-track-title);
-}
-
-.tl-card__more {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 64rpx;
-  height: 64rpx;
-  min-width: 44px;
+.tl-card__open {
+  display: block;
   min-height: 44px;
-  margin: -12rpx -12rpx -12rpx auto;
-  padding: 0;
+  width: 100%;
+  margin: 0;
+  padding: 6px 0;
   border: 0;
-  border-radius: 50%;
-  color: var(--note-text-3);
+  border-radius: var(--note-radius-sm);
   background: transparent;
+  color: var(--note-text);
+  text-align: left;
+  line-height: inherit;
+  white-space: normal;
   transition: background-color var(--note-duration-fast) var(--note-ease);
 }
-
-.tl-card__more:active {
-  background: var(--note-fill);
+.tl-card__open::after { border: 0; }
+.tl-card__open:active { background: var(--note-fill-2); }
+.tl-card__photo-label {
+  color: var(--note-text-2);
+  font-size: var(--note-font-subhead);
 }
-
 .tl-card__rich {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 5;
-  overflow: hidden;
   color: var(--note-text);
   font-size: var(--note-font-body);
   line-height: 1.55;
@@ -1229,19 +1118,10 @@ function previewNoteImage(note: Note, index: number) {
   margin-top: 14rpx;
 }
 
-.tl-card__tag {
-  min-height: 24px;
-  height: auto;
-  padding: 2px 8px;
-  color: var(--note-accent);
-  background: var(--note-accent-soft);
-  line-height: 1.2;
-}
-
 .tl-media {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8rpx;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12rpx;
   margin-top: 16rpx;
 }
 
@@ -1251,27 +1131,27 @@ function previewNoteImage(note: Note, index: number) {
 
 .tl-media__item {
   position: relative;
-  aspect-ratio: 1;
+  min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;
   border-radius: var(--note-radius-sm);
   overflow: hidden;
-  background: var(--note-fill-2);
+  background: transparent;
 }
 
 .tl-media--single .tl-media__item {
-  aspect-ratio: 4 / 3;
+  width: 100%; max-width: 280rpx; justify-self: start;
 }
 
 .tl-media__img {
+  display: block;
   width: 100%;
-  height: 100%;
+  height: auto;
 }
 
 .tl-media__placeholder {
-  position: absolute;
-  inset: 0;
+  min-height: 160rpx;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1340,9 +1220,4 @@ function previewNoteImage(note: Note, index: number) {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .tl-nav__title {
-    transform: none;
-  }
-}
 </style>

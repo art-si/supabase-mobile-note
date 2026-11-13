@@ -17,6 +17,8 @@
     "@capacitor/android": "^8.6.0",
     "@capacitor/app": "^8.1.2",
     "@capacitor/core": "^8.6.0",
+    "@capacitor/geolocation": "8.2.4",
+    "@capacitor/synapse": "1.0.4",
     "@dcloudio/uni-app": "3.0.0-alpha-1000920260626810",
     "@dcloudio/uni-cloud": "3.0.0-alpha-1000920260626810",
     "@dcloudio/uni-components": "3.0.0-alpha-1000920260626810",

@@ -5,14 +5,17 @@ import NoteIcon from '@/components/common/NoteIcon.vue'
 import NoteNavBar from '@/components/common/NoteNavBar.vue'
 import NoteTabBar from '@/components/common/NoteTabBar.vue'
 import NoteActionSheet from '@/components/common/NoteActionSheet.vue'
+import NoteSheet from '@/components/common/NoteSheet.vue'
 import { usePageTheme } from '@/composables/usePageTheme'
 import { useAuthStore } from '@/stores/auth'
 import { useNotesStore } from '@/stores/notes'
 import { useStorageModeStore } from '@/stores/storageMode'
 import { APPEARANCE_OPTIONS, THEME_PRESETS } from '@/stores/theme'
-import { dayKey, formatDayKey } from '@/utils/format'
 import { getSystemInsets } from '@/utils/systemInsets'
 import { getAllLocalNotes } from '@/api/localNotes'
+import { backupCloudNotes, type BackupProgress } from '@/api/noteBackup'
+import { getUserFacingErrorMessage } from '@/api/supabase'
+import { getStorageMode } from '@/utils/storageMode'
 
 const { theme, themeName, themeClass, isDark } = usePageTheme()
 const auth = useAuthStore()
@@ -22,52 +25,61 @@ const { top: statusInset, bottom: safeBottom } = getSystemInsets()
 const confirmOpen = ref(false)
 const transferChoiceOpen = ref(false)
 const pendingAction = ref<'local' | 'cloud' | 'logout'>('local')
-const localNoteCount = computed(() => getAllLocalNotes().length)
+const localNoteCount = ref(getAllLocalNotes().length)
+const backupOpen = ref(false)
+const backupBusy = ref(false)
+const backupDone = ref(false)
+const backupError = ref('')
+const emptyBackup = (): BackupProgress => ({ copied: 0, updated: 0, existing: 0, image: 0, images: 0 })
+const backupProgress = ref(emptyBackup())
+const canBackup = computed(() => storage.mode === 'cloud' && auth.isLoggedIn && auth.cloudAccessGranted)
 
 const account = computed(() => {
-  if (storage.mode === 'local') return '仅保存在此设备'
   const user = auth.user
   if (!user) return ''
   if (user.email) return user.email
   if (user.phone) return user.phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2')
-  return ''
+  return '已登录'
 })
 
-const displayName = computed(() => {
-  if (storage.mode === 'local') return '本机记录'
-  const user = auth.user
-  const metaName = user?.user_metadata?.name
-  if (typeof metaName === 'string' && metaName.trim()) return metaName.trim()
-  const email = user?.email
-  if (email) return email.split('@')[0] || email
-  const phone = user?.phone
-  if (phone) return `用户${phone.slice(-4)}`
-  return '时光记录者'
+const avatar = computed(() => {
+  const metadata = auth.user?.user_metadata
+  const candidates = auth.profile ? [auth.profile.avatar] : [metadata?.avatar_url, metadata?.picture, metadata?.avatar]
+  const url = candidates.find(
+    (value): value is string => typeof value === 'string' && /^https:\/\//i.test(value.trim())
+  )
+  return url?.trim() || ''
 })
-
-const avatarChar = computed(() => displayName.value.slice(0, 1).toUpperCase())
-
-const noteCount = computed(() => (store.hasMore ? `${store.notes.length}+` : String(store.notes.length)))
-const latestDay = computed(() => {
-  const first = store.notes[0]
-  return first ? formatDayKey(dayKey(first.createdAt)) : '暂无'
+const failedAvatar = ref('')
+const canPreviewAvatar = computed(() => Boolean(avatar.value && avatar.value !== failedAvatar.value))
+const avatarInitial = computed(() => {
+  const metadata = auth.user?.user_metadata
+  const name = [auth.profile?.nickName, metadata?.display_name, metadata?.full_name, metadata?.name, auth.user?.email].find(
+    (value): value is string => typeof value === 'string' && Boolean(value.trim())
+  )
+  return Array.from(name?.trim() || '云')[0]?.toLocaleUpperCase()
 })
 
 onLoad(async () => {
-  await storage.initialize()
-  storage.hydrate()
-  const valid = await auth.ensureValidSession()
-  if (!valid) return
-  if (!store.loaded) {
-    try {
-      await store.load()
-    } catch {
-      // 统计加载失败时保持占位
+  const initialization = storage.initialize()
+  if (storage.mode === 'cloud') {
+    await initialization
+    if (await auth.ensureValidSession()) {
+      void auth.refreshProfile()
+      await auth.requireCloudAccess().catch(() => {})
     }
   }
 })
 
+function previewAvatar() {
+  if (canPreviewAvatar.value) uni.previewImage({ urls: [avatar.value], current: avatar.value })
+}
+
 onBackPress(() => {
+  if (backupOpen.value) {
+    if (!backupBusy.value) backupOpen.value = false
+    return true
+  }
   if (transferChoiceOpen.value) {
     transferChoiceOpen.value = false
     return true
@@ -95,13 +107,55 @@ function beginCloudLogin(importLocal: boolean) {
   uni.setStorageSync('note-pending-local-import', importLocal ? 'yes' : 'no')
   store.reset()
   auth.clearSession(false)
-  storage.setMode('cloud')
+  if (!storage.setMode('cloud')) {
+    uni.removeStorageSync('note-pending-local-import')
+    uni.showToast({ title: '云端存储暂未开放，请联系管理员', icon: 'none' })
+    return
+  }
   uni.reLaunch({ url: '/pages/login/index' })
 }
 
 function chooseCloudImport(value: string) {
   transferChoiceOpen.value = false
   beginCloudLogin(value === 'import')
+}
+
+function importLocalRecords() {
+  uni.setStorageSync('note-pending-local-import', 'yes')
+  store.reset()
+  uni.reLaunch({ url: '/pages/login/index' })
+}
+
+function openBackup() {
+  backupDone.value = false
+  backupError.value = ''
+  backupProgress.value = emptyBackup()
+  backupOpen.value = true
+}
+
+async function startBackup() {
+  const user = auth.user?.id
+  if (!canBackup.value || !user || backupBusy.value) return
+  backupBusy.value = true
+  backupError.value = ''
+  backupProgress.value = emptyBackup()
+  const assertActive = () => {
+    if (!canBackup.value || auth.user?.id !== user || getStorageMode() !== 'cloud') throw new Error('登录状态已变化，备份已暂停')
+  }
+  try {
+    await backupCloudNotes(user, async () => {
+      assertActive()
+      const token = await store.requireToken()
+      assertActive()
+      return token
+    }, assertActive, value => { backupProgress.value = value })
+    backupDone.value = true
+  } catch (cause) {
+    backupError.value = getUserFacingErrorMessage(cause, '备份未完成，请重试')
+  } finally {
+    localNoteCount.value = getAllLocalNotes().length
+    backupBusy.value = false
+  }
 }
 
 function logout() {
@@ -129,27 +183,23 @@ async function confirmMineAction() {
 <template>
   <wd-config-provider :theme="themeName">
     <view class="page mine-page" :class="[themeClass, { 'note-dark': isDark }]" :style="{ '--note-status-inset': `${statusInset}px`, '--note-safe-bottom': `${safeBottom}px` }">
-      <NoteNavBar title="我的" />
+      <NoteNavBar title="设置" />
 
       <view class="mine-body">
-        <view class="mine-profile note-card">
-          <view class="mine-avatar" aria-hidden="true">{{ avatarChar }}</view>
-          <view class="mine-profile__copy">
-            <text class="mine-profile__eyebrow">{{ storage.mode === 'local' ? '本机空间' : '云端空间' }}</text>
-            <text class="mine-profile__name">{{ displayName }}</text>
-            <text class="mine-profile__account">{{ account }}</text>
-          </view>
-        </view>
-
-        <view class="mine-stats note-card">
-          <view class="mine-stat">
-            <text class="mine-stat__value">{{ noteCount }}</text>
-            <text class="mine-stat__label">时间轴笔记</text>
-          </view>
-          <view class="mine-stats__divider" aria-hidden="true" />
-          <view class="mine-stat">
-            <text class="mine-stat__value mine-stat__value--small">{{ latestDay }}</text>
-            <text class="mine-stat__label">最近记录</text>
+        <view v-if="storage.mode === 'cloud' && auth.user" class="mine-account note-card">
+          <button class="mine-account__avatar" :disabled="!canPreviewAvatar" :aria-label="canPreviewAvatar ? '查看头像大图' : '账号头像'" @tap="previewAvatar">
+            <image
+              v-if="avatar && avatar !== failedAvatar"
+              :key="avatar"
+              :src="avatar"
+              mode="aspectFill"
+              @error="failedAvatar = avatar"
+            />
+            <text v-else>{{ avatarInitial }}</text>
+          </button>
+          <view class="mine-account__copy">
+            <text class="mine-account__label">{{ auth.profile?.nickName || '云端账号' }}</text>
+            <text class="mine-account__value">{{ account }}</text>
           </view>
         </view>
 
@@ -171,11 +221,10 @@ async function confirmMineAction() {
                 :aria-pressed="theme.preset === preset.id"
                 @tap="theme.selectPreset(preset.id)"
               >
-                <NoteIcon v-if="theme.preset === preset.id" name="check" size="28rpx" color="#ffffff" />
+                <NoteIcon v-if="theme.preset === preset.id" name="check" size="28rpx" color="var(--note-accent-contrast)" />
               </button>
             </view>
           </view>
-          <text class="mine-caption">{{ theme.currentPreset.name }} · {{ theme.currentPreset.description }}</text>
           <view class="mine-row mine-row--border">
             <view class="mine-row__label">
               <NoteIcon name="settings" size="34rpx" />
@@ -205,9 +254,8 @@ async function confirmMineAction() {
             <NoteIcon name="phone" size="38rpx" />
             <view class="mine-storage-option__copy">
               <text class="mine-storage-option__title">本机存储</text>
-              <text class="mine-storage-option__desc">只保存在这台设备 · 无需登录</text>
+              <text class="mine-storage-option__desc">无需登录，只保存在当前设备</text>
             </view>
-            <text v-if="storage.mode === 'local'" class="mine-storage-option__state">正在使用</text>
             <NoteIcon v-if="storage.mode === 'local'" name="check" size="32rpx" />
           </button>
           <view v-if="storage.cloudAvailable" class="mine-storage-divider" />
@@ -220,27 +268,29 @@ async function confirmMineAction() {
           >
             <NoteIcon name="cloud" size="38rpx" />
             <view class="mine-storage-option__copy">
-              <text class="mine-storage-option__title">Supabase 云端</text>
-              <text class="mine-storage-option__desc">登录后在云端保存，可跨设备访问</text>
+              <text class="mine-storage-option__title">云端存储</text>
+              <text class="mine-storage-option__desc">登录后核实授权，可跨设备查看</text>
             </view>
-            <text v-if="storage.mode === 'cloud'" class="mine-storage-option__state">正在使用</text>
             <NoteIcon v-if="storage.mode === 'cloud'" name="check" size="32rpx" />
           </button>
-          <text v-else class="mine-storage-unavailable">
-            云端模式暂未开放；本机记录仍可正常使用。
-          </text>
+          <view v-if="storage.configError" class="mine-storage-unavailable" role="status">
+            <text>{{ storage.configError }}</text>
+            <button class="note-btn note-btn--plain" :disabled="storage.loading" @tap="storage.initialize(true)">{{ storage.loading ? '获取中…' : '重新获取云端配置' }}</button>
+          </view>
+          <text v-else-if="!storage.cloudAvailable" class="mine-storage-unavailable">{{ storage.loading ? '正在获取云端配置…' : '云端模式暂未开放' }}</text>
+          <button v-if="storage.mode === 'cloud' && localNoteCount > 0" class="mine-import" @tap="importLocalRecords">
+            <text>导入本机记录</text>
+            <text class="mine-import__count">{{ localNoteCount }} 条</text>
+            <NoteIcon name="chevron-right" size="28rpx" />
+          </button>
+          <button v-if="canBackup" class="mine-import" @tap="openBackup">
+            <text>备份到本机</text>
+            <text class="mine-import__count">离线查看</text>
+            <NoteIcon name="chevron-right" size="28rpx" />
+          </button>
         </view>
 
-        <text class="mine-section-title">关于</text>
-        <view class="mine-section note-card mine-about">
-          <view class="mine-row">
-            <view class="mine-row__label">
-              <NoteIcon name="info" size="34rpx" />
-              <text>版本</text>
-            </view>
-            <text class="mine-row__value">1.0.1</text>
-          </view>
-        </view>
+        <text class="mine-version mine-about">时光记事 · 1.0.1</text>
 
         <button v-if="storage.mode === 'cloud'" class="note-btn note-btn--danger mine-logout" @tap="logout">
           <NoteIcon name="logout" size="32rpx" />
@@ -248,6 +298,18 @@ async function confirmMineAction() {
         </button>
       </view>
 
+      <NoteSheet :show="backupOpen" title="备份到本机" @update:show="!backupBusy && (backupOpen = $event)">
+        <view class="mine-backup" :aria-busy="backupBusy">
+          <text v-if="!backupBusy && !backupDone && !backupError">将当前账号的笔记和图片复制到这台设备。已有本机笔记会保留；备份后切换到本机存储即可离线查看。</text>
+          <text v-if="backupBusy" role="status">{{ backupProgress.images ? `正在下载图片 ${backupProgress.image} / ${backupProgress.images}…` : '正在读取并备份云端笔记…' }}</text>
+          <text v-if="backupBusy || backupDone || backupError" role="status">新增 {{ backupProgress.copied }} 条 · 更新 {{ backupProgress.updated }} 条 · 跳过 {{ backupProgress.existing }} 条</text>
+          <text v-if="backupDone">{{ backupProgress.copied + backupProgress.updated + backupProgress.existing ? '备份完成。你可以继续使用云端，或切换到本机查看。' : '当前账号没有可备份的云端记录。' }}</text>
+          <text v-if="backupError" class="mine-backup__error" role="alert">{{ backupError }}。已备份的笔记会保留。</text>
+        </view>
+        <template #footer>
+          <button class="note-btn note-btn--primary mine-backup__submit" :disabled="backupBusy || (!backupDone && !canBackup)" @tap="backupDone ? (backupOpen = false) : startBackup()">{{ backupBusy ? '备份中…' : backupDone ? '完成' : backupError ? '重试备份' : '开始备份' }}</button>
+        </template>
+      </NoteSheet>
       <NoteActionSheet
         v-model:show="transferChoiceOpen"
         title="导入本机记录？"
@@ -261,7 +323,7 @@ async function confirmMineAction() {
       />
       <NoteActionSheet
         v-model:show="confirmOpen"
-        :title="pendingAction === 'logout' ? '退出登录' : pendingAction === 'local' ? '切换到本机存储' : '切换到 Supabase 云端'"
+        :title="pendingAction === 'logout' ? '退出登录' : pendingAction === 'local' ? '切换到本机存储' : '切换到 云端存储'"
         :description="pendingAction === 'logout' ? '退出后需要重新登录才能查看你的云端笔记。' : pendingAction === 'local' ? '切换后查看这台设备上的记录，云端记录仍会保留。' : '登录后可在云端保存记录，并在其他设备继续使用。'"
         :items="[{ value: 'confirm', label: pendingAction === 'logout' ? '退出登录' : pendingAction === 'local' ? '切换到本机' : '前往登录', icon: pendingAction === 'logout' ? 'logout' : pendingAction === 'local' ? 'phone' : 'cloud', danger: pendingAction === 'logout' }]"
         @select="confirmMineAction"
@@ -274,120 +336,101 @@ async function confirmMineAction() {
 <style scoped lang="scss">
 .mine-page {
   padding-bottom: calc(var(--note-tabbar-height) + var(--note-inset-bottom) + 48rpx);
+  background: radial-gradient(ellipse at 90% 0%, rgba(var(--note-accent-rgb), .09), transparent 65%) top / 100% 300px no-repeat, var(--note-bg);
 }
 
 .mine-body {
   max-width: 760rpx;
   margin: 0 auto;
-  padding: calc(66px + var(--note-inset-top)) 32rpx 0;
+  padding: calc(var(--note-nav-height) + 16px) 32rpx 0;
 }
 
-.mine-profile {
+.mine-account {
   display: flex;
   align-items: center;
-  gap: 24rpx;
-  padding: 32rpx;
-  border-radius: 36rpx;
-  background: linear-gradient(135deg, var(--note-surface), var(--note-surface-2));
+  gap: 16px;
+  padding: 16px;
+  background: linear-gradient(110deg, var(--note-surface) 62%, rgba(var(--note-accent-rgb), .09));
 }
 
-.mine-avatar {
+.mine-account__avatar {
   flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 112rpx;
-  height: 112rpx;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  overflow: hidden;
   border-radius: 50%;
   background: var(--note-accent-soft);
+  box-shadow: 0 0 0 3px var(--note-surface), 0 0 0 4px rgba(var(--note-accent-rgb), .20);
   color: var(--note-accent);
-  font-size: var(--note-font-title2);
-  font-weight: 700;
-}
-
-.mine-profile__copy {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6rpx;
-}
-
-.mine-profile__name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--note-text);
   font-size: var(--note-font-title3);
-  font-weight: 700;
+  font-weight: 600;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  line-height: 1;
+}
+.mine-account__avatar::after { border: 0; }
+.mine-account__avatar:active:not([disabled]) { transform: scale(.96); }
+
+.mine-account__avatar image {
+  width: 100%;
+  height: 100%;
 }
 
-.mine-profile__eyebrow {
-  color: var(--note-accent);
-  font-size: var(--note-font-caption);
-  font-weight: 700;
+.mine-body > .mine-section-title:first-child {
+  margin-top: 0;
 }
-
-.mine-profile__account {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--note-text-2);
-  font-size: var(--note-font-footnote);
-}
-
-.mine-stats {
-  display: flex;
-  align-items: center;
-  margin-top: 24rpx;
-  padding: 32rpx;
-}
-
-.mine-stat {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+.mine-account__copy {
+  display: grid;
   gap: 8rpx;
   min-width: 0;
 }
-
-.mine-stat__value {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 36px;
-  color: var(--note-accent);
-  font-size: var(--note-font-title1);
-  font-weight: 700;
-  line-height: 1.1;
-}
-
-.mine-stat__value--small {
-  font-size: var(--note-font-subhead);
-  line-height: 1.2;
-  text-align: center;
-}
-
-.mine-stat__label {
+.mine-account__label {
   color: var(--note-text-2);
-  font-size: var(--note-font-caption);
+  font-size: var(--note-font-footnote);
 }
-
-.mine-stats__divider {
-  width: 1rpx;
-  height: 72rpx;
-  background: var(--note-separator);
+.mine-account__value {
+  color: var(--note-text);
+  font-size: var(--note-font-body);
+  overflow-wrap: anywhere;
+}
+.mine-version {
+  display: block;
+  margin-top: 32rpx;
+  text-align: center;
+  color: var(--note-text-3);
+  font-size: var(--note-font-footnote);
 }
 
 .mine-section {
   margin-top: 12rpx;
   padding: 8rpx 32rpx 20rpx;
   border-radius: 28rpx;
+  box-shadow: var(--note-shadow-sm);
 }
-
-.mine-about {
-  padding-bottom: 8rpx;
+.mine-import {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  margin: 8px 0 0;
+  padding: 8px 0;
+  border: 0;
+  border-top: 1px solid var(--note-separator);
+  background: transparent;
+  color: var(--note-accent);
+  text-align: left;
+  font-size: var(--note-font-subhead);
 }
+.mine-import::after { border: 0; }
+.mine-import:active { opacity: .65; }
+.mine-import__count { margin-left: auto; color: var(--note-text-2); font-size: var(--note-font-footnote); }
+.mine-backup { display: grid; gap: 12px; padding: 8px 16px 16px; color: var(--note-text-2); font-size: var(--note-font-subhead); line-height: 1.55; }
+.mine-backup__error { color: var(--note-danger); }
+.mine-backup__submit { width: 100%; }
 
 .mine-storage-option {
   display: flex;
@@ -436,13 +479,6 @@ async function confirmMineAction() {
   line-height: 1.45;
 }
 
-.mine-storage-option__state {
-  flex: 0 0 auto;
-  color: var(--note-accent);
-  font-size: var(--note-font-caption);
-  font-weight: 600;
-}
-
 .mine-storage-divider {
   height: 1rpx;
   background: var(--note-separator);
@@ -460,7 +496,7 @@ async function confirmMineAction() {
 
 .mine-section-title {
   display: block;
-  margin: 32rpx 8rpx 0;
+  margin: 32rpx 16rpx 12rpx;
   color: var(--note-text-2);
   font-size: var(--note-font-footnote);
   font-weight: 600;
@@ -499,7 +535,7 @@ async function confirmMineAction() {
 .mine-swatches {
   display: flex;
   flex: none;
-  gap: 16rpx;
+  gap: 12rpx;
   margin-left: auto;
 }
 
@@ -528,13 +564,6 @@ async function confirmMineAction() {
 
 .mine-swatch--active {
   box-shadow: 0 0 0 4rpx var(--note-surface), 0 0 0 8rpx rgba(var(--note-accent-rgb), 0.4);
-}
-
-.mine-caption {
-  display: block;
-  padding: 0 0 8rpx;
-  color: var(--note-text-2);
-  font-size: var(--note-font-caption);
 }
 
 .mine-appearance {
@@ -566,7 +595,9 @@ async function confirmMineAction() {
     box-shadow var(--note-duration-fast) var(--note-ease);
 }
 
-.mine-appearance__option::after { border: 0; }
+.mine-appearance__option::after {
+  border: 0;
+}
 
 .mine-appearance__option--active {
   color: var(--note-text);

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import NoteIcon from './NoteIcon.vue'
 import type { NoteIconName } from './icon-glyphs'
+import { useNotesStore } from '@/stores/notes'
 import { haptic } from '@/utils/haptic'
 import { getSystemInsets } from '@/utils/systemInsets'
 
@@ -11,7 +12,7 @@ const { bottom: safeBottom } = getSystemInsets()
 
 const items: Array<{ key: TabKey; label: string; icon: NoteIconName; url: string }> = [
   { key: 'timeline', label: '时间轴', icon: 'timeline', url: '/pages/timeline/index' },
-  { key: 'mine', label: '我的', icon: 'mine', url: '/pages/mine/index' }
+  { key: 'mine', label: '设置', icon: 'settings', url: '/pages/mine/index' }
 ]
 
 function go(key: TabKey) {
@@ -24,7 +25,8 @@ function go(key: TabKey) {
 
 function compose() {
   haptic('light')
-  uni.navigateTo({ url: '/pages/editor/index' })
+  const day = useNotesStore().selectedDay
+  uni.navigateTo({ url: `/pages/editor/index${day ? `?day=${day}` : ''}` })
 }
 </script>
 
@@ -71,7 +73,7 @@ function compose() {
   height: calc(var(--note-tabbar-height) + var(--note-inset-bottom));
   padding: 0 calc(12px + var(--note-inset-right)) var(--note-inset-bottom) calc(12px + var(--note-inset-left));
   border-top: 1rpx solid var(--note-separator);
-  box-shadow: 0 -8rpx 32rpx rgba(30, 52, 80, 0.05);
+  box-shadow: none;
 }
 
 .note-tabbar__item {
@@ -126,12 +128,12 @@ function compose() {
   border: 0;
   border-radius: 50%;
   color: var(--note-accent-contrast);
-  background: linear-gradient(145deg, var(--note-accent) 0%, var(--note-accent-strong) 100%);
-  box-shadow: var(--note-shadow-accent);
+  background: var(--note-accent-finish);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .23), var(--note-shadow-accent);
   transition: transform var(--note-duration-fast) var(--note-ease);
 }
 
 .note-tabbar__compose:active {
-  transform: scale(0.9);
+  transform: scale(0.96);
 }
 </style>

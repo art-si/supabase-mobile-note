@@ -27,6 +27,7 @@ try {
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
     page.setDefaultTimeout(8000)
+    await page.route('**/rest/v1/rpc/get_note_cloud_access', route => route.fulfill({ json: 'login' }))
     await page.goto(`${base}/#/pages/editor/index`, { waitUntil: 'networkidle' })
     await page.locator('.editor-toolbar').waitFor()
     await page.evaluate(({ top, bottom, left, right, largeText }) => {

@@ -20,7 +20,7 @@ export const iconGlyphs = {
   'mood-inspired': '\uf46b',
   'mood-memorial': '\uf417',
   'mail': '\uf32f',
-  'phone': '\uf5c1',
+  'phone': '\uf4e7',
   'lock': '\uf47b',
   'eye': '\uf341',
   'eye-off': '\uf340',
@@ -43,8 +43,14 @@ export const iconGlyphs = {
   'list': '\uf478',
   'quote': '\uf6b0',
   'keyboard': '\uf451',
-  'tag': '\uf5af',
+  'tag': '\uf5b0',
   'mic': '\uf490',
+  'quick': '\uf46d',
+  'sun': '\uf5a2',
+  'rain': '\uf2b6',
+  'snow': '\uf2bc',
+  'fog': '\uf2a2',
+  'storm': '\uf2ab',
 } as const
 
 export type NoteIconName = keyof typeof iconGlyphs

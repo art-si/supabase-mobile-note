@@ -19,7 +19,7 @@
   "mood-inspired": "lightbulb",
   "mood-memorial": "heart",
   "mail": "envelope",
-  "phone": "telephone",
+  "phone": "phone",
   "lock": "lock",
   "eye": "eye",
   "eye-off": "eye-slash",
@@ -42,6 +42,12 @@
   "list": "list-ul",
   "quote": "quote",
   "keyboard": "keyboard",
-  "tag": "tag-fill",
-  "mic": "mic"
+  "tag": "tag",
+  "mic": "mic",
+  "quick": "lightning-charge",
+  "sun": "sun",
+  "rain": "cloud-rain",
+  "snow": "cloud-snow",
+  "fog": "cloud-fog2",
+  "storm": "cloud-lightning-rain"
 }

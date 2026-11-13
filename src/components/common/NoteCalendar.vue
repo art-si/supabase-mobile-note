@@ -9,12 +9,14 @@ import { haptic } from '@/utils/haptic'
 const props = defineProps<{
   show: boolean
   selectedDay: string
+  selectedTime?: string
 }>()
 
 const emit = defineEmits<{
   'update:show': [value: boolean]
   select: [day: string]
-  clear: []
+  time: [value: string]
+  confirm: []
 }>()
 
 const store = useNotesStore()
@@ -35,7 +37,7 @@ watch(
     const base = props.selectedDay ? parseDayKey(props.selectedDay) : new Date()
     viewYear.value = base.getFullYear()
     viewMonth.value = base.getMonth()
-    void loadCounts()
+    if (props.selectedTime === undefined) void loadCounts()
   }
 )
 
@@ -44,7 +46,7 @@ async function shiftMonth(delta: number) {
   viewYear.value = date.getFullYear()
   viewMonth.value = date.getMonth()
   counts.value = {}
-  await loadCounts()
+  if (props.selectedTime === undefined) await loadCounts()
 }
 
 interface CalendarCell {
@@ -90,26 +92,29 @@ const summary = computed(() => {
 function pick(cell: CalendarCell) {
   haptic('light')
   emit('select', cell.key)
-  emit('update:show', false)
+  if (props.selectedTime === undefined) emit('update:show', false)
 }
 
 function pickToday() {
   haptic('light')
   emit('select', today)
-  emit('update:show', false)
+  if (props.selectedTime === undefined) emit('update:show', false)
 }
 
-function clear() {
-  emit('clear')
-  emit('update:show', false)
+const hours = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, '0'))
+const minutes = Array.from({ length: 60 }, (_, index) => String(index).padStart(2, '0'))
+const timeIndices = computed(() => (props.selectedTime ?? '00:00').split(':').map(Number))
+function changeTime(event: { detail: { value: number[] } }) {
+  const [hour, minute] = event.detail.value
+  emit('time', hours[hour ?? 0] + ':' + minutes[minute ?? 0])
 }
 </script>
 
 <template>
   <NoteSheet
     :show="show"
-    title="选择日期"
-    label="日历，选择要查看的日期"
+    :title="selectedTime === undefined ? '选择日期' : '记录时间'"
+    :label="selectedTime === undefined ? '选择要查看的日期' : '选择笔记日期和时间'"
     @update:show="emit('update:show', $event)"
   >
     <view class="cal">
@@ -119,7 +124,7 @@ function clear() {
         </button>
         <view class="cal__title-group">
           <text class="cal__title">{{ viewYear }}年{{ viewMonth + 1 }}月</text>
-          <text class="cal__subtitle">{{ monthTotal }} 条记录</text>
+          <text v-if="selectedTime === undefined" class="cal__subtitle">{{ monthTotal }} 条记录</text>
         </view>
         <button class="cal__nav" aria-label="下一个月" @tap="shiftMonth(1)">
           <NoteIcon name="chevron-right" size="34rpx" />
@@ -140,30 +145,59 @@ function clear() {
             'cal__cell--today': cell.isToday,
             'cal__cell--selected': cell.key === selectedDay
           }"
-          :aria-label="`${formatDayKey(cell.key)}，${cell.count} 条记录`"
+          :aria-label="selectedTime === undefined ? `${formatDayKey(cell.key)}，${cell.count} 条记录` : formatDayKey(cell.key)"
           :aria-pressed="cell.key === selectedDay"
           @tap="pick(cell)"
         >
           <view class="cal__bubble">
             <text class="cal__num">{{ cell.day }}</text>
           </view>
-          <view class="cal__dot" :class="{ 'cal__dot--on': cell.count > 0 }" aria-hidden="true" />
+          <view v-if="selectedTime === undefined" class="cal__dot" :class="{ 'cal__dot--on': cell.count > 0 }" aria-hidden="true" />
         </button>
       </view>
 
-      <text class="cal__summary" role="status">{{ summary }}</text>
+      <text v-if="selectedTime === undefined" class="cal__summary" role="status">{{ summary }}</text>
     </view>
 
+    <view v-if="selectedTime !== undefined" class="cal__time">
+      <text class="cal__time-label">时间 · {{ selectedTime }}</text>
+      <picker-view class="cal__time-picker" :value="timeIndices" indicator-style="height: 44px" aria-label="选择小时和分钟" @change="changeTime">
+        <picker-view-column><view v-for="hour in hours" :key="hour" class="cal__time-option">{{ hour }} 时</view></picker-view-column>
+        <picker-view-column><view v-for="minute in minutes" :key="minute" class="cal__time-option">{{ minute }} 分</view></picker-view-column>
+      </picker-view>
+    </view>
     <template #footer>
       <view class="cal__actions">
         <button class="note-btn note-btn--secondary cal__btn" @tap="pickToday">回到今天</button>
-        <button class="note-btn note-btn--plain cal__btn" @tap="clear">查看全部</button>
+        <button v-if="selectedTime !== undefined" class="note-btn note-btn--primary cal__btn" @tap="emit('confirm'); emit('update:show', false)">完成</button>
       </view>
     </template>
   </NoteSheet>
 </template>
 
 <style scoped lang="scss">
+.cal__time {
+  border-top: 1rpx solid var(--note-separator);
+  margin: 0 24rpx;
+  padding-top: 12rpx;
+}
+.cal__time-label {
+  color: var(--note-text-2);
+  font-size: var(--note-font-footnote);
+}
+.cal__time-picker {
+  height: 132px;
+  width: 100%;
+}
+.cal__time-option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  color: var(--note-text);
+  font-size: var(--note-font-body);
+  font-variant-numeric: tabular-nums;
+}
 .cal {
   padding: 0 24rpx 20rpx;
 }

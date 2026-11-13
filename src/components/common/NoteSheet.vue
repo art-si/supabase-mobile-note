@@ -17,6 +17,7 @@ const props = withDefaults(
 const emit = defineEmits<{ 'update:show': [value: boolean] }>()
 
 const instance = getCurrentInstance()
+const panelId = `note-sheet-${instance?.uid}`
 const slots = useSlots()
 const { bottom: safeBottom } = getSystemInsets()
 const mounted = ref(false)
@@ -57,8 +58,24 @@ function measure() {
 }
 
 // #ifdef H5
+let previousFocus: HTMLElement | null = null
+function panelControls() {
+  const panel = document.getElementById(panelId)
+  return Array.from(panel?.querySelectorAll<HTMLElement>('button:not([disabled]), uni-button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex="0"]') || []).filter(element => element.getBoundingClientRect().height > 0)
+}
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') requestClose()
+  if (event.key !== 'Tab') return
+  const panel = document.getElementById(panelId)
+  const controls = panelControls()
+  const first = controls[0]
+  const last = controls[controls.length - 1]
+  if (!first || !last) { event.preventDefault(); panel?.focus({ preventScroll: true }); return }
+  if (!panel?.contains(document.activeElement) || (event.shiftKey && document.activeElement === first)) {
+    event.preventDefault(); last.focus({ preventScroll: true })
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault(); first.focus({ preventScroll: true })
+  }
 }
 // #endif
 
@@ -82,6 +99,9 @@ async function open() {
   const sequence = ++openSequence
   cancelSpring?.()
   const wasMounted = mounted.value
+  // #ifdef H5
+  if (!wasMounted) previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  // #endif
   mounted.value = true
   lockPageScroll(true)
   await nextTick()
@@ -90,9 +110,13 @@ async function open() {
   const start = wasMounted ? offset.value ?? 0 : panelHeight
   offset.value = start
   scrimOn.value = true
+  // #ifdef H5
+  for (const control of panelControls()) if (control.tabIndex < 0) control.tabIndex = 0
+  document.getElementById(panelId)?.focus({ preventScroll: true })
+  // #endif
   cancelSpring = spring(start, 0, {
     damping: 1,
-    response: 0.4,
+    response: 0.32,
     onUpdate: (value) => {
       offset.value = value
     }
@@ -118,6 +142,10 @@ function close() {
       offset.value = null
       velocity = 0
       lockPageScroll(false)
+      // #ifdef H5
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
+      previousFocus = null
+      // #endif
     }
   })
 }
@@ -229,7 +257,9 @@ function onTouchCancel() {
       @touchmove.stop.prevent
     />
     <view
+      :id="panelId"
       class="note-sheet__panel"
+      tabindex="-1"
       :style="[panelStyle, { '--note-sheet-safe-bottom': `${safeBottom}px` }]"
       role="dialog"
       aria-modal="true"
@@ -290,6 +320,7 @@ function onTouchCancel() {
 }
 
 .note-sheet__panel {
+  outline: none;
   box-sizing: border-box;
   position: relative;
   display: flex;
@@ -373,8 +404,9 @@ function onTouchCancel() {
 }
 
 .note-sheet__body {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
   max-height: 68vh;
   max-height: 68dvh;
   overscroll-behavior: contain;
@@ -382,7 +414,10 @@ function onTouchCancel() {
 
 .note-sheet__footer {
   flex: none;
-  padding: 16rpx 32rpx 24rpx;
+  position: relative;
+  z-index: 1;
+  background: var(--note-surface);
+  padding: 24rpx 32rpx 24rpx;
   border-top: 1rpx solid var(--note-separator);
 }
 

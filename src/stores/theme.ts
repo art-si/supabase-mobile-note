@@ -1,9 +1,9 @@
 import { defineStore } from 'pinia'
 
 export const THEME_PRESETS = [
-  { id: 'blue', name: '晴蓝', description: '经典明快', accent: '#007aff', accentDark: '#0a84ff' },
+  { id: 'blue', name: '晴蓝', description: '经典明快', accent: '#006edb', accentDark: '#0a84ff' },
   { id: 'indigo', name: '靛夜', description: '沉静专注', accent: '#5856d6', accentDark: '#5e5ce6' },
-  { id: 'teal', name: '青波', description: '清爽平和', accent: '#30b0c7', accentDark: '#40c8e0' }
+  { id: 'teal', name: '青波', description: '清爽平和', accent: '#007f90', accentDark: '#40c8e0' }
 ] as const
 
 export type ThemePresetId = (typeof THEME_PRESETS)[number]['id']

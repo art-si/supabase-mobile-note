@@ -101,7 +101,7 @@ page,
   background: var(--note-surface);
   border: 1rpx solid var(--note-separator);
   border-radius: var(--note-radius-lg);
-  box-shadow: var(--note-shadow-sm);
+  box-shadow: none;
 }
 
 .note-chip {
@@ -156,11 +156,12 @@ textarea:focus-visible {
   border: 0;
 }
 
-.note-btn:active:not(.is-disabled) {
+.note-btn:active:not(.is-disabled):not([disabled]) {
   transform: scale(0.98);
 }
 
-.note-btn.is-disabled {
+.note-btn.is-disabled,
+.note-btn[disabled] {
   opacity: 0.4;
 }
 
@@ -284,4 +285,12 @@ uni-scroll-view .uni-scroll-view::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
+/* #endif */
+
+/* #ifdef H5 */
+.page { animation: note-page-in 180ms ease-out; }
+@keyframes note-page-in { from { opacity: 0; } to { opacity: 1; } }
+button, [role='button'] { cursor: pointer; }
+button[disabled] { cursor: default; }
+@media (prefers-reduced-motion: reduce) { .page { animation: none; } }
 /* #endif */

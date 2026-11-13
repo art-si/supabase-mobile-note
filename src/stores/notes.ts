@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { createNote, deleteNote, listDayCounts, listNotes, listNotesByDay, updateNote } from '@/api/notes'
+import { nextTick } from 'vue'
+import { createNote, deleteNote, listDayCounts, listNotes, listNotesByDay, listNotesForImport, updateNote } from '@/api/notes'
 import { NOTE_IMAGE_SIGN_TTL, removeNoteImages, signNoteImages, uploadNoteImage } from '@/api/noteImages'
 import { countLocalNotesByDay, createLocalNote, deleteLocalNote, getAllLocalNotes, listLocalNotes, listLocalNotesByDay, updateLocalNote } from '@/api/localNotes'
 import { clearLocalNoteImageUrlCache, resolveLocalNoteImage } from '@/api/localNoteImages'
@@ -11,6 +12,26 @@ import { useAuthStore } from './auth'
 interface CachedImageUrl {
   url: string
   expiresAt: number
+}
+
+export interface LocalImportProgress {
+  total: number
+  completed: number
+  phase: 'checking' | 'image' | 'note' | 'complete'
+  imageIndex: number
+  imageTotal: number
+  imagePercent: number
+}
+
+interface LocalImportReceipt {
+  cloudId: string
+  sourceUpdatedAt: string
+}
+
+export interface LocalImportResult {
+  added: number
+  existing: number
+  total: number
 }
 
 interface NotesState {
@@ -29,25 +50,11 @@ interface NotesState {
   monthDays: Record<string, Record<string, number>>
   monthLoading: boolean
   imageUrls: Record<string, CachedImageUrl>
-  pendingRemoval: Note | null
 }
 
-const UNDO_WINDOW_MS = 5000
 const IMPORTED_LOCAL_NOTES_KEY = 'note-imported-local-notes'
-let removalTimer: ReturnType<typeof setTimeout> | null = null
-const hiddenRemovalIds = new Set<string>()
-let removalEpoch = 0
 let loadSequence = 0
 let daySequence = 0
-
-function insertByDate(list: Note[], note: Note) {
-  if (list.some((item) => item.id === note.id)) return list
-  return [...list, note].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-}
-
-function visibleNotes(notes: Note[]) {
-  return notes.filter((note) => !hiddenRemovalIds.has(note.id))
-}
 
 function errorMessage(error: unknown) {
   return error instanceof Error && error.message ? error.message : '网络异常，请稍后重试'
@@ -69,58 +76,112 @@ export const useNotesStore = defineStore('notes', {
     dayError: '',
     monthDays: {},
     monthLoading: false,
-    imageUrls: {},
-    pendingRemoval: null
+    imageUrls: {}
   }),
   getters: {
     dayGroups: (state) => groupNotesByDay(state.notes),
     activeNotes: (state) => (state.selectedDay ? state.dayNotes : state.notes),
     activeGroups: (state) => groupNotesByDay(state.selectedDay ? state.dayNotes : state.notes),
-    activeLoading: (state) => (state.selectedDay ? state.dayLoading : state.loading),
+    activeLoading: (state) => state.refreshing || (state.selectedDay ? state.dayLoading : state.loading),
     activeError: (state) => (state.selectedDay ? state.dayError : state.error),
     totalCount: (state) => state.notes.length,
     imageUrl: (state) => (path: string) => state.imageUrls[path]?.url ?? ''
   },
   actions: {
-    async importLocalToCloud(token: string, userId: string) {
+    async importLocalToCloud(token: string, userId: string, onProgress?: (progress: LocalImportProgress) => void): Promise<LocalImportResult> {
+      if (!token || !userId) throw new Error('登录已过期，请重新登录后继续导入')
       const localNotes = getAllLocalNotes()
       const stored = uni.getStorageSync(IMPORTED_LOCAL_NOTES_KEY)
-      let imported: Record<string, string[]> = {}
+      let imported: Record<string, Record<string, LocalImportReceipt>> = {}
       try {
         const parsed: unknown = typeof stored === 'string' ? JSON.parse(stored) : stored
-        if (parsed && typeof parsed === 'object') imported = parsed as Record<string, string[]>
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          for (const [id, receipts] of Object.entries(parsed)) {
+            if (!receipts || typeof receipts !== 'object' || Array.isArray(receipts)) continue
+            imported[id] = {}
+            for (const [localId, receipt] of Object.entries(receipts)) {
+              if (receipt && typeof receipt === 'object' && 'cloudId' in receipt && typeof receipt.cloudId === 'string' &&
+                'sourceUpdatedAt' in receipt && typeof receipt.sourceUpdatedAt === 'string') {
+                imported[id][localId] = { cloudId: receipt.cloudId, sourceUpdatedAt: receipt.sourceUpdatedAt }
+              }
+            }
+          }
+        }
       } catch {
         imported = {}
       }
-      const done = new Set(imported[userId] ?? [])
-      let count = 0
+      const receipts = imported[userId] ?? {}
+      const progress: LocalImportProgress = {
+        total: localNotes.length, completed: 0,
+        phase: 'checking', imageIndex: 0, imageTotal: 0, imagePercent: 0
+      }
+      onProgress?.({ ...progress })
+      const backupPrefix = `cloud-backup-${userId}-`
+      const backupCloudId = (note: Note) => note.id.startsWith(backupPrefix) && note.backupSourceUpdatedAt === note.updatedAt
+        ? note.id.slice(backupPrefix.length) : ''
+      const candidates = await listNotesForImport(token, userId, localNotes.map(note => note.createdAt), [
+        ...Object.values(receipts).map(receipt => receipt.cloudId), ...localNotes.map(backupCloudId).filter(Boolean)
+      ])
+      const available = new Map(candidates.map(note => [note.id, note]))
+      const result: LocalImportResult = { added: 0, existing: 0, total: localNotes.length }
+      const remember = (source: Note, cloud: Note) => {
+        receipts[source.id] = { cloudId: cloud.id, sourceUpdatedAt: source.updatedAt }
+        imported[userId] = receipts
+        uni.setStorageSync(IMPORTED_LOCAL_NOTES_KEY, JSON.stringify(imported))
+        available.delete(cloud.id)
+        progress.completed += 1
+        onProgress?.({ ...progress })
+      }
       for (const note of localNotes) {
-        if (done.has(note.id)) continue
+        const receipt = receipts[note.id]
+        const previous = available.get(backupCloudId(note)) ?? (receipt?.sourceUpdatedAt === note.updatedAt ? available.get(receipt.cloudId) : undefined)
+        const matching = previous ?? [...available.values()].find(cloud =>
+          new Date(cloud.createdAt).getTime() === new Date(note.createdAt).getTime() && cloud.content === note.content &&
+          cloud.mood === note.mood && cloud.images.length === note.images.length &&
+          JSON.stringify([...cloud.tags].sort()) === JSON.stringify([...note.tags].sort()))
+        if (matching) {
+          result.existing += 1
+          remember(note, matching)
+          continue
+        }
         const images: string[] = []
-        for (const path of note.images) images.push(await uploadNoteImage(token, userId, path))
-        await createNote(token, {
+        progress.imageTotal = note.images.length
+        for (const [index, path] of note.images.entries()) {
+          progress.phase = 'image'
+          progress.imageIndex = index + 1
+          progress.imagePercent = 0
+          onProgress?.({ ...progress })
+          images.push(await uploadNoteImage(token, userId, path, percent => {
+            progress.imagePercent = percent
+            onProgress?.({ ...progress })
+          }))
+        }
+        progress.phase = 'note'
+        onProgress?.({ ...progress })
+        const saved = await createNote(token, {
           content: note.content,
           mood: note.mood,
           images,
           tags: note.tags,
           createdAt: note.createdAt
         })
-        done.add(note.id)
-        imported[userId] = [...done]
-        uni.setStorageSync(IMPORTED_LOCAL_NOTES_KEY, JSON.stringify(imported))
-        count += 1
+        result.added += 1
+        remember(note, saved)
       }
-      return count
+      progress.phase = 'complete'
+      onProgress?.({ ...progress })
+      return result
     },
     async requireToken() {
       if (getStorageMode() === 'local') return ''
       const auth = useAuthStore()
       const valid = await auth.ensureValidSession()
       if (!valid || !auth.token) throw new Error('登录已过期，请重新登录')
+      await auth.requireCloudAccess()
       return auth.token
     },
     async resolveImages(notes: Note[]) {
-      const margin = 10 * 60 * 1000
+      const margin = 60 * 1000
       const now = Date.now()
       const paths = [...new Set(notes.flatMap((note) => note.images))].filter((path) => {
         const cached = this.imageUrls[path]
@@ -142,7 +203,7 @@ export const useNotesStore = defineStore('notes', {
       try {
         const token = await this.requireToken()
         const signed = await signNoteImages(token, paths)
-        const expiresAt = Date.now() + (NOTE_IMAGE_SIGN_TTL * 1000 - margin)
+        const expiresAt = Date.now() + NOTE_IMAGE_SIGN_TTL * 1000
         const entries = Object.entries(signed).map(([path, url]) => [path, { url, expiresAt }])
         this.imageUrls = { ...this.imageUrls, ...Object.fromEntries(entries) }
       } catch {
@@ -158,7 +219,7 @@ export const useNotesStore = defineStore('notes', {
           ? listLocalNotes({ keyword: this.keyword })
           : await listNotes(await this.requireToken(), { keyword: this.keyword })
         if (sequence !== loadSequence) return
-        this.notes = visibleNotes(result.notes)
+        this.notes = result.notes
         this.hasMore = result.hasMore
         this.loaded = true
         void this.resolveImages(result.notes)
@@ -178,7 +239,7 @@ export const useNotesStore = defineStore('notes', {
         const result = getStorageMode() === 'local'
           ? listLocalNotes({ keyword: this.keyword })
           : await listNotes(await this.requireToken(), { keyword: this.keyword })
-        this.notes = visibleNotes(result.notes)
+        this.notes = result.notes
         this.hasMore = result.hasMore
         this.loaded = true
         void this.resolveImages(result.notes)
@@ -200,7 +261,7 @@ export const useNotesStore = defineStore('notes', {
           ? listLocalNotes({ before: last.createdAt, keyword })
           : await listNotes(await this.requireToken(), { before: last.createdAt, keyword })
         if (keyword !== this.keyword || this.selectedDay) return
-        this.notes = [...this.notes, ...visibleNotes(result.notes)]
+        this.notes = [...this.notes, ...result.notes]
         this.hasMore = result.hasMore
         void this.resolveImages(result.notes)
       } catch (error) {
@@ -236,7 +297,7 @@ export const useNotesStore = defineStore('notes', {
           ? listLocalNotesByDay(day)
           : await listNotesByDay(await this.requireToken(), day)
         if (sequence !== daySequence) return
-        this.dayNotes = visibleNotes(notes)
+        this.dayNotes = notes
         void this.resolveImages(this.dayNotes)
       } catch (error) {
         if (sequence !== daySequence) return
@@ -247,10 +308,23 @@ export const useNotesStore = defineStore('notes', {
       }
     },
     async refreshActive() {
-      if (this.selectedDay) {
-        await this.selectDay(this.selectedDay)
-      } else {
-        await this.refresh()
+      if (this.refreshing) return
+      this.refreshing = true
+      try {
+        await nextTick()
+        // Let the loading state paint even when local storage returns synchronously.
+        // #ifdef H5
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        })
+        // #endif
+        if (this.selectedDay) {
+          await this.selectDay(this.selectedDay)
+        } else {
+          await this.load()
+        }
+      } finally {
+        this.refreshing = false
       }
     },
     async loadMonthDays(year: number, month: number) {
@@ -317,74 +391,9 @@ export const useNotesStore = defineStore('notes', {
         removeNoteImages(token, previous.images).catch(() => {})
       }
     },
-    // 滑动删除先本地移除，留出撤销窗口；窗口结束才真正落库，图片不会被提前清掉。
-    removeWithUndo(id: string) {
-      const note = [...this.notes, ...this.dayNotes].find((item) => item.id === id)
-      if (!note) return null
-      this.flushRemoval()
-      hiddenRemovalIds.add(note.id)
-      this.notes = this.notes.filter((item) => item.id !== id)
-      this.dayNotes = this.dayNotes.filter((item) => item.id !== id)
-      this.pendingRemoval = note
-      removalTimer = setTimeout(() => {
-        void this.commitRemoval().catch(() => {})
-      }, UNDO_WINDOW_MS)
-      return note
-    },
-    undoRemoval() {
-      const note = this.pendingRemoval
-      if (!note) return false
-      if (removalTimer) clearTimeout(removalTimer)
-      removalTimer = null
-      this.pendingRemoval = null
-      hiddenRemovalIds.delete(note.id)
-      if (!this.keyword || (note.contentText ?? '').toLowerCase().includes(this.keyword.toLowerCase())) {
-        this.notes = insertByDate(this.notes, note)
-      }
-      if (this.selectedDay) {
-        if (dayKey(note.createdAt) === this.selectedDay) this.dayNotes = insertByDate(this.dayNotes, note)
-      }
-      return true
-    },
-    async commitRemoval() {
-      const note = this.pendingRemoval
-      if (!note) return
-      if (removalTimer) clearTimeout(removalTimer)
-      removalTimer = null
-      this.pendingRemoval = null
-      const epoch = removalEpoch
-      try {
-        const local = getStorageMode() === 'local'
-        const token = local ? '' : await this.requireToken()
-        if (local) deleteLocalNote(note.id)
-        else await deleteNote(token, note.id)
-        this.invalidateMonths()
-        if (note.images.length) removeNoteImages(token, note.images).catch(() => {})
-      } catch (error) {
-        if (epoch !== removalEpoch) return
-        hiddenRemovalIds.delete(note.id)
-        if (!this.keyword || (note.contentText ?? '').toLowerCase().includes(this.keyword.toLowerCase())) {
-          this.notes = insertByDate(this.notes, note)
-        }
-        if (this.selectedDay && dayKey(note.createdAt) === this.selectedDay) {
-          this.dayNotes = insertByDate(this.dayNotes, note)
-        }
-        this.error = errorMessage(error)
-        uni.showToast({ title: '删除失败，笔记已恢复', icon: 'none' })
-        throw error
-      }
-    },
-    flushRemoval() {
-      if (!this.pendingRemoval) return
-      void this.commitRemoval().catch(() => {})
-    },
     reset() {
-      if (removalTimer) clearTimeout(removalTimer)
-      removalTimer = null
-      removalEpoch += 1
       loadSequence += 1
       daySequence += 1
-      hiddenRemovalIds.clear()
       this.notes = []
       this.loaded = false
       this.loading = false
@@ -401,7 +410,6 @@ export const useNotesStore = defineStore('notes', {
       this.monthLoading = false
       this.imageUrls = {}
       clearLocalNoteImageUrlCache()
-      this.pendingRemoval = null
     }
   }
 })

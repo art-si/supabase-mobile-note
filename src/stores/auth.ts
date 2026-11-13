@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { accountPasswordLogin, refreshToken, signOut, wechatPhoneLogin } from '@/api/supabase'
+import { fetchCloudStorageAccess } from '@/api/storageConfig'
+import { getAccountProfile, type AccountProfile } from '@/api/account'
 import type { Session } from '@/api/types'
 import { isLocalStorageMode } from '@/utils/storageMode'
 
@@ -8,10 +10,28 @@ const LOGIN_URL = '/pages/login/index'
 const LOGIN_ROUTE = 'pages/login/index'
 
 let refreshSessionPromise: Promise<void> | null = null
+let accessCheck: { token: string; result: Promise<void> } | null = null
+export const CLOUD_ACCESS_DENIED = '当前账号未获云端存储授权，请联系管理员，或继续使用本机存储。'
 
 interface AuthState {
   session: Session | null
+  profile: AccountProfile | null
   booted: boolean
+  cloudAccessDenied: boolean
+  cloudAccessGranted: boolean
+}
+
+function tokenExpiry(token: string): number | undefined {
+  try {
+    const part = token.split('.')[1]
+    if (!part) return
+    const encoded = part.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '=')
+    const decoded = typeof atob === 'function' ? atob(padded)
+      : String.fromCharCode(...new Uint8Array(uni.base64ToArrayBuffer(padded)))
+    const payload: unknown = JSON.parse(decoded)
+    if (payload && typeof payload === 'object' && 'exp' in payload && typeof payload.exp === 'number' && Number.isFinite(payload.exp)) return payload.exp
+  } catch { /* Opaque tokens use the session metadata. Server authentication remains authoritative. */ }
 }
 
 function normalizeSession(session: Session | null) {
@@ -36,18 +56,15 @@ function redirectToLogin() {
 export const useAuthStore = defineStore('auth', {
   state: (): AuthState => ({
     session: null,
-    booted: false
+    profile: null,
+    booted: false,
+    cloudAccessDenied: false,
+    cloudAccessGranted: false
   }),
   getters: {
     token: (state) => state.session?.access_token || '',
     user: (state) => state.session?.user || null,
-    isLoggedIn: (state) => Boolean(state.session?.access_token),
-    isTokenExpired: (state) => {
-      if (!state.session?.access_token) return false
-      const expiresAt = state.session?.expires_at
-      if (!expiresAt) return true
-      return expiresAt * 1000 - Date.now() < 180_000
-    }
+    isLoggedIn: (state) => Boolean(state.session?.access_token)
   },
   actions: {
     hydrate() {
@@ -60,6 +77,17 @@ export const useAuthStore = defineStore('auth', {
           this.session = null
         }
       }
+      try {
+        const cachedProfile: unknown = uni.getStorageSync('note-account-profile')
+        const value: unknown = typeof cachedProfile === 'string' ? JSON.parse(cachedProfile) : cachedProfile
+        if (value && typeof value === 'object' && 'userId' in value && value.userId === this.user?.id &&
+          'avatar' in value && (value.avatar === null || typeof value.avatar === 'string') &&
+          'nickName' in value && typeof value.nickName === 'string') {
+          this.profile = { avatar: value.avatar, nickName: value.nickName }
+        }
+      } catch (cause) {
+        console.warn('[account] unable to restore cached profile', cause)
+      }
       this.booted = true
     },
     persist() {
@@ -71,6 +99,9 @@ export const useAuthStore = defineStore('auth', {
     },
     clearSession(redirect = false) {
       this.session = null
+      this.profile = null
+      this.cloudAccessDenied = false
+      this.cloudAccessGranted = false
       this.persist()
       if (redirect) redirectToLogin()
     },
@@ -81,7 +112,8 @@ export const useAuthStore = defineStore('auth', {
         this.clearSession(redirect)
         return false
       }
-      if (!this.isTokenExpired) return true
+      const expiresAt = tokenExpiry(this.token) ?? this.session?.expires_at
+      if (expiresAt && expiresAt * 1000 - Date.now() >= 180_000) return true
 
       try {
         await this.refreshSession(redirect)
@@ -92,11 +124,47 @@ export const useAuthStore = defineStore('auth', {
     },
     async login(account: string, password: string) {
       this.session = normalizeSession(await accountPasswordLogin(account.trim(), password))
+      this.profile = null
+      this.cloudAccessDenied = false
+      this.cloudAccessGranted = false
       this.persist()
       return this.session
     },
+    async refreshProfile() {
+      const userId = this.user?.id
+      const token = this.token
+      if (!userId || !token) return
+      try {
+        const profile = await getAccountProfile(token, userId)
+        if (this.user?.id !== userId) return
+        this.profile = profile
+        if (profile) uni.setStorageSync('note-account-profile', JSON.stringify({ userId, ...profile }))
+      } catch (cause) {
+        console.warn('[account] unable to refresh profile', cause)
+      }
+    },
+    async requireCloudAccess(): Promise<void> {
+      const token = this.token
+      if (!token) throw new Error('登录已过期，请重新登录')
+      if (accessCheck?.token === token) return accessCheck.result
+      const result = (async () => {
+        const access = await fetchCloudStorageAccess(token)
+        if (this.token !== token) throw new Error('登录状态已变化，请重新登录')
+        this.cloudAccessDenied = access === 'closed' || access === 'denied'
+        this.cloudAccessGranted = access === 'allowed'
+        if (this.cloudAccessDenied) throw new Error(CLOUD_ACCESS_DENIED)
+        if (access !== 'allowed') throw new Error('无法核实云端存储权限，请重新登录')
+      })().finally(() => {
+        if (accessCheck?.token === token) accessCheck = null
+      })
+      accessCheck = { token, result }
+      return result
+    },
     async loginWithWechatPhone(phoneCode: string) {
       this.session = normalizeSession(await wechatPhoneLogin(phoneCode))
+      this.profile = null
+      this.cloudAccessDenied = false
+      this.cloudAccessGranted = false
       this.persist()
       return this.session
     },

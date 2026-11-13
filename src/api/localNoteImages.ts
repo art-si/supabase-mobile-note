@@ -55,6 +55,25 @@ export async function saveLocalNoteImage(filePath: string): Promise<string> {
   // #endif
 }
 
+export async function downloadLocalNoteImage(url: string): Promise<string> {
+  const path = await new Promise<string>((resolve, reject) => {
+    uni.downloadFile({
+      url, timeout: 30_000,
+      success(result) {
+        if (result.statusCode === 200 && result.tempFilePath) resolve(result.tempFilePath)
+        else reject(new Error('图片下载失败，请重试'))
+      },
+      fail() { reject(new Error('图片下载失败，请检查网络后重试')) }
+    })
+  })
+  // #ifdef H5
+  try { return await saveLocalNoteImage(path) } finally { if (path.startsWith('blob:')) URL.revokeObjectURL(path) }
+  // #endif
+  // #ifndef H5
+  return saveLocalNoteImage(path)
+  // #endif
+}
+
 export async function resolveLocalNoteImage(path: string): Promise<string> {
   // #ifdef H5
   if (!path.startsWith(H5_IMAGE_PREFIX)) return path

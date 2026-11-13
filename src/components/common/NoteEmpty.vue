@@ -25,7 +25,15 @@ const emit = defineEmits<{ action: [] }>()
     </view>
     <text class="note-empty__title">{{ title }}</text>
     <text v-if="description" class="note-empty__desc">{{ description }}</text>
-    <button v-if="actionText" class="note-btn note-btn--secondary note-empty__action" @tap="emit('action')">
+    <button
+      v-if="actionText"
+      class="note-btn note-btn--secondary note-empty__action"
+      role="button"
+      tabindex="0"
+      @tap="emit('action')"
+      @keydown.enter.prevent="emit('action')"
+      @keydown.space.prevent="emit('action')"
+    >
       {{ actionText }}
     </button>
   </view>
