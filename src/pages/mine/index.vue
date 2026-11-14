@@ -216,7 +216,7 @@ async function confirmMineAction() {
                 :key="preset.id"
                 class="mine-swatch"
                 :class="{ 'mine-swatch--active': theme.preset === preset.id }"
-                :style="{ background: isDark ? preset.accentDark : preset.accent }"
+                :style="{ '--swatch-color': isDark ? preset.accentDark : preset.accent }"
                 :aria-label="`主题色：${preset.name}`"
                 :aria-pressed="theme.preset === preset.id"
                 @tap="theme.selectPreset(preset.id)"
@@ -290,7 +290,7 @@ async function confirmMineAction() {
           </button>
         </view>
 
-        <text class="mine-version mine-about">时光记事 · 1.0.1</text>
+        <text class="mine-version mine-about">时光记事 · 1.0.3</text>
 
         <button v-if="storage.mode === 'cloud'" class="note-btn note-btn--danger mine-logout" @tap="logout">
           <NoteIcon name="logout" size="32rpx" />
@@ -406,7 +406,7 @@ async function confirmMineAction() {
 
 .mine-section {
   margin-top: 12rpx;
-  padding: 8rpx 32rpx 20rpx;
+  padding: 4rpx 24rpx 16rpx;
   border-radius: 28rpx;
   box-shadow: var(--note-shadow-sm);
 }
@@ -508,8 +508,8 @@ async function confirmMineAction() {
   align-items: center;
   justify-content: space-between;
   gap: 16rpx 24rpx;
-  min-height: 96rpx;
-  padding: 12rpx 0;
+  min-height: 88rpx;
+  padding: 8rpx 0;
 }
 
 .mine-row--border {
@@ -540,6 +540,7 @@ async function confirmMineAction() {
 }
 
 .mine-swatch {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -551,7 +552,20 @@ async function confirmMineAction() {
   padding: 0;
   border: 0;
   border-radius: 50%;
+  background: transparent;
   transition: transform var(--note-duration-fast) var(--note-ease), box-shadow var(--note-duration-fast) var(--note-ease);
+}
+
+.mine-swatch::before {
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: var(--swatch-color);
+  content: '';
+}
+
+.mine-swatch > * {
+  position: relative;
 }
 
 .mine-swatch::after {
@@ -563,7 +577,7 @@ async function confirmMineAction() {
 }
 
 .mine-swatch--active {
-  box-shadow: 0 0 0 4rpx var(--note-surface), 0 0 0 8rpx rgba(var(--note-accent-rgb), 0.4);
+  box-shadow: inset 0 0 0 2px rgba(var(--note-accent-rgb), 0.4);
 }
 
 .mine-appearance {

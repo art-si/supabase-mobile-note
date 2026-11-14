@@ -53,8 +53,19 @@ export async function getWeatherLocation(): Promise<WeatherCity> {
     }
     throw new Error('暂时无法定位，请开启设备定位后重试，或手动选择城市')
   }
-  return { id: -1, name: '当前位置', region: '设备定位 · 仅用于获取当地天气',
-    latitude: Number(latitude.toFixed(2)), longitude: Number(longitude.toFixed(2)) }
+  const lat = Number(latitude.toFixed(2))
+  const lon = Number(longitude.toFixed(2))
+  let name = '当前位置'
+  try {
+    const data = await getJson(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=zh`)
+    if (record(data)) {
+      const parts = [data.city, data.locality].filter((value): value is string => typeof value === 'string' && Boolean(value))
+      name = [...new Set(parts)].join(' · ') || name
+    }
+  } catch (error) {
+    console.warn('[weather] location name unavailable', error)
+  }
+  return { id: -1, name, region: '设备定位 · 仅用于获取当地天气', latitude: lat, longitude: lon }
 }
 
 function record(value: unknown): value is Record<string, unknown> {

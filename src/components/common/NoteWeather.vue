@@ -42,8 +42,8 @@ async function search() {
       </view>
       <text v-if="weather.report" class="weather-detail">{{ weatherDescription(weather.report.code) }} · {{ Math.round(weather.report.low) }}°–{{ Math.round(weather.report.high) }}° · {{ formatTime(new Date(weather.report.updatedAt).toISOString()) }} 更新{{ weather.fresh ? '' : '（上次缓存）' }}</text>
       <text v-if="weather.error" class="weather-error" role="alert">{{ weather.error }}</text>
-      <button class="note-btn note-btn--primary weather-refresh" :disabled="weather.loading" @tap="weather.source === 'location' ? weather.refresh(true) : weather.useCurrentLocation()">{{ weather.locating ? '正在定位…' : weather.loading ? '更新中…' : weather.source === 'location' ? '刷新当地天气' : '使用当前位置' }}</button>
-      <text class="weather-hint">按设备当前位置获取天气。定位仅在使用时读取，天气由 Open-Meteo 提供。</text>
+      <button class="note-btn note-btn--secondary weather-refresh" :disabled="weather.loading" @tap="weather.source === 'location' ? weather.refresh(true) : weather.useCurrentLocation()">{{ weather.locating ? '正在定位…' : weather.loading ? '更新中…' : weather.source === 'location' ? '刷新当地天气' : '使用当前位置' }}</button>
+      <text class="weather-hint">按设备当前位置获取天气。定位仅在使用时读取，天气由 Open-Meteo 提供，位置名称由 BigDataCloud 提供。</text>
       <button class="note-btn note-btn--plain weather-manual-toggle" :aria-expanded="manualOpen" @tap="manualOpen = !manualOpen">{{ manualOpen ? '收起城市选择' : '手动选择城市' }}</button>
       <view v-if="manualOpen" class="weather-search">
         <wd-input v-model="keyword" placeholder="输入城市名或拼音…" aria-label="天气城市" clearable confirm-type="search" @confirm="search" />
@@ -63,7 +63,7 @@ async function search() {
 <style scoped lang="scss">
 .weather-result::after { border: 0; }
 .weather-panel {
-  padding: 8rpx 32rpx 24rpx;
+  padding: 4rpx 32rpx 12rpx;
 }
 .weather-current, .weather-result {
   display: flex;
@@ -88,7 +88,7 @@ async function search() {
   line-height: 1.6;
 }
 .weather-hint {
-  margin: 20rpx 0;
+  margin: 12rpx 0;
 }
 .weather-temperature {
   font-size: var(--note-font-large);

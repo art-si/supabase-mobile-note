@@ -119,10 +119,10 @@ function compose() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 104rpx;
-  height: 104rpx;
-  min-width: 52px;
-  min-height: 52px;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
   margin: 0 24rpx;
   padding: 0;
   border: 0;

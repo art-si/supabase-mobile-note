@@ -172,6 +172,11 @@ export const useNotesStore = defineStore('notes', {
       onProgress?.({ ...progress })
       return result
     },
+    requireUserId() {
+      const id = useAuthStore().user?.id
+      if (!id) throw new Error('登录已过期，请重新登录')
+      return id
+    },
     async requireToken() {
       if (getStorageMode() === 'local') return ''
       const auth = useAuthStore()
@@ -217,7 +222,7 @@ export const useNotesStore = defineStore('notes', {
       try {
         const result = getStorageMode() === 'local'
           ? listLocalNotes({ keyword: this.keyword })
-          : await listNotes(await this.requireToken(), { keyword: this.keyword })
+          : await listNotes(await this.requireToken(), this.requireUserId(), { keyword: this.keyword })
         if (sequence !== loadSequence) return
         this.notes = result.notes
         this.hasMore = result.hasMore
@@ -238,7 +243,7 @@ export const useNotesStore = defineStore('notes', {
       try {
         const result = getStorageMode() === 'local'
           ? listLocalNotes({ keyword: this.keyword })
-          : await listNotes(await this.requireToken(), { keyword: this.keyword })
+          : await listNotes(await this.requireToken(), this.requireUserId(), { keyword: this.keyword })
         this.notes = result.notes
         this.hasMore = result.hasMore
         this.loaded = true
@@ -259,7 +264,7 @@ export const useNotesStore = defineStore('notes', {
         const keyword = this.keyword
         const result = getStorageMode() === 'local'
           ? listLocalNotes({ before: last.createdAt, keyword })
-          : await listNotes(await this.requireToken(), { before: last.createdAt, keyword })
+          : await listNotes(await this.requireToken(), this.requireUserId(), { before: last.createdAt, keyword })
         if (keyword !== this.keyword || this.selectedDay) return
         this.notes = [...this.notes, ...result.notes]
         this.hasMore = result.hasMore
@@ -295,7 +300,7 @@ export const useNotesStore = defineStore('notes', {
       try {
         const notes = getStorageMode() === 'local'
           ? listLocalNotesByDay(day)
-          : await listNotesByDay(await this.requireToken(), day)
+          : await listNotesByDay(await this.requireToken(), this.requireUserId(), day)
         if (sequence !== daySequence) return
         this.dayNotes = notes
         void this.resolveImages(this.dayNotes)
@@ -336,7 +341,7 @@ export const useNotesStore = defineStore('notes', {
         const range = monthRange(year, month)
         const counts = getStorageMode() === 'local'
           ? countLocalNotesByDay(range)
-          : await listDayCounts(await this.requireToken(), range)
+          : await listDayCounts(await this.requireToken(), this.requireUserId(), range)
         this.monthDays = { ...this.monthDays, [key]: counts }
         return counts
       } catch {
@@ -367,7 +372,7 @@ export const useNotesStore = defineStore('notes', {
       const local = getStorageMode() === 'local'
       const token = local ? '' : await this.requireToken()
       const previous = [...this.notes, ...this.dayNotes].find((item) => item.id === id)
-      const note = local ? updateLocalNote(id, draft) : await updateNote(token, id, draft)
+      const note = local ? updateLocalNote(id, draft) : await updateNote(token, this.requireUserId(), id, draft)
       this.invalidateMonths()
       this.notes = this.notes.map((item) => (item.id === id ? note : item))
       this.dayNotes = this.dayNotes.map((item) => (item.id === id ? note : item))
@@ -383,7 +388,7 @@ export const useNotesStore = defineStore('notes', {
       const token = local ? '' : await this.requireToken()
       const previous = [...this.notes, ...this.dayNotes].find((item) => item.id === id)
       if (local) deleteLocalNote(id)
-      else await deleteNote(token, id)
+      else await deleteNote(token, this.requireUserId(), id)
       this.invalidateMonths()
       this.notes = this.notes.filter((item) => item.id !== id)
       this.dayNotes = this.dayNotes.filter((item) => item.id !== id)

@@ -2,8 +2,8 @@
   "name": "时光记事",
   "appid": "__UNI__NOTETIME",
   "description": "时间轴记事本 · Apple Design 风格",
-  "versionName": "1.0.1",
-  "versionCode": "101",
+  "versionName": "1.0.3",
+  "versionCode": "103",
   "transformPx": false,
   "networkTimeout": {
     "request": 20000

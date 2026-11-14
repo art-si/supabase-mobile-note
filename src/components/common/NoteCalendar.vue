@@ -90,6 +90,7 @@ const summary = computed(() => {
 })
 
 function pick(cell: CalendarCell) {
+  if (props.selectedTime !== undefined && cell.key > todayKey()) return
   haptic('light')
   emit('select', cell.key)
   if (props.selectedTime === undefined) emit('update:show', false)
@@ -146,6 +147,7 @@ function changeTime(event: { detail: { value: number[] } }) {
             'cal__cell--selected': cell.key === selectedDay
           }"
           :aria-label="selectedTime === undefined ? `${formatDayKey(cell.key)}，${cell.count} 条记录` : formatDayKey(cell.key)"
+          :disabled="selectedTime !== undefined && cell.key > todayKey()"
           :aria-pressed="cell.key === selectedDay"
           @tap="pick(cell)"
         >
@@ -314,6 +316,10 @@ function changeTime(event: { detail: { value: number[] } }) {
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
+}
+
+.cal__cell:disabled .cal__num {
+  opacity: 0.3;
 }
 
 .cal__cell--out .cal__num {

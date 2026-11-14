@@ -61,7 +61,7 @@ cd android
 
 Android 系统栏使用 Capacitor 注入的 `--safe-area-inset-*` 与 CSS `env()` 合并计算，三键导航、手势导航和横屏侧边安全区共用这套间距。微信小程序的自定义顶部栏另外避让原生菜单胶囊。
 
-覆盖更新时保持包名 `com.shiguang.notes` 与上述签名不变，递增 `android/app/build.gradle` 的 `versionCode`，并同步应用版本。直接安装新版即可保留本机笔记，无需卸载。当前版本为 1.0.1（101），与已交付的 1.0（1）使用同一证书。旧包及新包的证书 SHA-256 均应为 `b963c4b6517b0e0684203bd856fba0a3f4e0635930edb15503b1d621c195226e`。
+覆盖更新时保持包名 `com.shiguang.notes` 与上述签名不变，递增 `android/app/build.gradle` 的 `versionCode`，并同步应用版本。直接安装新版即可保留本机笔记，无需卸载。当前版本为 1.0.3（103），与已交付的 1.0（1）使用同一证书。旧包及新包的证书 SHA-256 均应为 `b963c4b6517b0e0684203bd856fba0a3f4e0635930edb15503b1d621c195226e`。
 
 安卓云端语音使用原生 16 kHz 单声道 PCM WAV 录音，通过 `note-transcribe` Edge Function 调用 NVIDIA 托管 Whisper large v3，不依赖系统语音识别引擎。复用 art-supabase-pro 的服务端 `AI_API_KEY`（`AI_BASE_URL` 指向 NVIDIA），不读取旧的 OpenAI 密钥。按住录音、松开上传转写、上滑取消；取消时不上传，录音仅暂存在内存。本机模式没有入口。服务端校验登录和笔记授权、限制录音大小及请求频率；供应商密钥仅留在服务端。
 

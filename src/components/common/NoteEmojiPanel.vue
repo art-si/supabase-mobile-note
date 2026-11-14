@@ -75,7 +75,7 @@ function onPick(emoji: string) {
 .emoji-panel {
   display: flex;
   flex-direction: column;
-  max-height: min(620rpx, 54dvh);
+  height: min(620rpx, 54dvh);
   overflow: hidden;
   overscroll-behavior: contain;
   border-radius: var(--note-radius-lg) var(--note-radius-lg) 0 0;
@@ -154,7 +154,7 @@ function onPick(emoji: string) {
 
 .emoji-panel__body {
   flex: 1;
-  height: min(480rpx, 42dvh);
+  height: 0;
   min-height: 0;
   overscroll-behavior: contain;
 }

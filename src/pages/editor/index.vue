@@ -199,14 +199,14 @@ function updateCreatedDate(value: string) {
   const [year, month, day] = value.split('-').map(Number)
   const date = new Date(dateTimeDraft.value)
   date.setFullYear(year!, month! - 1, day!)
-  dateTimeDraft.value = date.toISOString()
+  dateTimeDraft.value = new Date(Math.min(date.getTime(), Date.now())).toISOString()
 }
 
 function updateCreatedTime(value: string) {
   const [hour, minute] = value.split(':').map(Number)
   const date = new Date(dateTimeDraft.value)
   date.setHours(hour!, minute!, 0, 0)
-  dateTimeDraft.value = date.toISOString()
+  dateTimeDraft.value = new Date(Math.min(date.getTime(), Date.now())).toISOString()
 }
 
 // #ifdef H5
@@ -448,14 +448,14 @@ function toggleBold() {
 }
 
 function openDateTime() {
-  dateTimeDraft.value = createdAt.value
+  dateTimeDraft.value = new Date(Math.min(new Date(createdAt.value).getTime(), Date.now())).toISOString()
   hideKeyboard()
   emojiOpen.value = false
   dateTimeOpen.value = true
 }
 
 function confirmDateTime() {
-  createdAt.value = dateTimeDraft.value
+  createdAt.value = new Date(Math.min(new Date(dateTimeDraft.value).getTime(), Date.now())).toISOString()
   haptic('light')
 }
 
@@ -693,6 +693,10 @@ function navigateToPreviousPage() {
 }
 
 async function save() {
+  if (new Date(createdAt.value).getTime() > Date.now()) {
+    uni.showToast({ title: '记录时间不能晚于当前时间', icon: 'none' })
+    return
+  }
   if (saving.value) return
   if (editorCtx.value) {
     await new Promise<void>((resolve) => {
@@ -1247,13 +1251,13 @@ function keepDraftAndExit() {
 }
 
 .editor-richtext :deep(.ql-editor) {
-  padding: 0;
+  padding: 0 8px;
   overflow-wrap: anywhere;
 }
 
 .editor-richtext :deep(.ql-editor.ql-blank::before) {
-  left: 0;
-  right: 0;
+  left: 8px;
+  right: 8px;
   color: var(--note-text-3);
   font-style: normal;
 }
@@ -1458,10 +1462,15 @@ function keepDraftAndExit() {
   height: calc(50px + var(--note-toolbar-inset, 0px));
   padding: 0 16rpx var(--note-toolbar-inset, 0px);
   overflow-x: auto;
+  scrollbar-width: none;
   background: var(--note-material-thick);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border-top: 1rpx solid var(--note-separator);
+}
+
+.editor-toolbar::-webkit-scrollbar {
+  display: none;
 }
 
 .editor-toolbar__group {

@@ -34,10 +34,12 @@ export async function listNotesForImport(token: string, userId: string, dates: s
 
 export async function listNotes(
   token: string,
+  userId: string,
   options: { before?: string; keyword?: string } = {}
 ): Promise<NoteListResult> {
   const params: Record<string, string | number | boolean | undefined> = {
     select: '*',
+    user_id: `eq.${userId}`,
     order: 'created_at.desc,id.desc',
     limit: PAGE_SIZE + 1
   }
@@ -88,8 +90,8 @@ export async function listCloudBackupPage(token: string, userId: string, after: 
   return keysToCamel<Note[]>(rows)
 }
 
-export async function updateNote(token: string, id: string, draft: NoteDraft): Promise<Note> {
-  const rows = await request<unknown[]>(restPath('notes', buildQuery({ id: `eq.${id}` })), {
+export async function updateNote(token: string, userId: string, id: string, draft: NoteDraft): Promise<Note> {
+  const rows = await request<unknown[]>(restPath('notes', buildQuery({ id: `eq.${id}`, user_id: `eq.${userId}` })), {
     method: 'PATCH',
     token,
     body: { content: draft.content, mood: draft.mood, images: draft.images, tags: draft.tags, ...(draft.createdAt ? { created_at: draft.createdAt } : {}) },
@@ -100,8 +102,8 @@ export async function updateNote(token: string, id: string, draft: NoteDraft): P
   return note
 }
 
-export async function deleteNote(token: string, id: string): Promise<void> {
-  const deleted = await request<Array<{ id: string }>>(restPath('notes', buildQuery({ id: `eq.${id}`, select: 'id' })), {
+export async function deleteNote(token: string, userId: string, id: string): Promise<void> {
+  const deleted = await request<Array<{ id: string }>>(restPath('notes', buildQuery({ id: `eq.${id}`, user_id: `eq.${userId}`, select: 'id' })), {
     method: 'DELETE',
     token,
     headers: { Prefer: 'return=representation' }
@@ -109,13 +111,14 @@ export async function deleteNote(token: string, id: string): Promise<void> {
   if (deleted.length !== 1) throw new Error('未能删除笔记，请核对云端授权或刷新后重试')
 }
 
-export async function listNotesByDay(token: string, day: string): Promise<Note[]> {
+export async function listNotesByDay(token: string, userId: string, day: string): Promise<Note[]> {
   const { from, to } = dayRange(day)
   const rows = await request<unknown[]>(
     restPath(
       'notes',
       buildQuery({
         select: '*',
+        user_id: `eq.${userId}`,
         order: 'created_at.desc,id.desc',
         and: `(created_at.gte.${from},created_at.lt.${to})`,
         limit: 500
@@ -128,6 +131,7 @@ export async function listNotesByDay(token: string, day: string): Promise<Note[]
 
 export async function listDayCounts(
   token: string,
+  userId: string,
   range: { from: string; to: string }
 ): Promise<Record<string, number>> {
   const rows = await request<Array<{ created_at: string }>>(
@@ -135,6 +139,7 @@ export async function listDayCounts(
       'notes',
       buildQuery({
         select: 'created_at',
+        user_id: `eq.${userId}`,
         and: `(created_at.gte.${range.from},created_at.lt.${range.to})`,
         order: 'created_at.asc',
         limit: 1000

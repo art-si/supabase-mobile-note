@@ -341,6 +341,24 @@ function onStripPick(item: StripDay) {
   onSelectDay(item.key)
 }
 
+let longPressed = false
+function promptDelete(note: Note) {
+  longPressed = true
+  uni.showModal({
+    title: '删除笔记？', content: '删除后无法恢复。', confirmText: '删除', confirmColor: '#ff3b30',
+    success: async ({ confirm }) => {
+      if (!confirm) return
+      try {
+        await store.remove(note.id)
+        uni.showToast({ title: '已删除', icon: 'none' })
+      } catch {
+        uni.showToast({ title: '删除失败，请稍后重试', icon: 'none' })
+      }
+    }
+  })
+  setTimeout(() => { longPressed = false }, 800)
+}
+
 function openEditor(note?: Note) {
   uni.navigateTo({ url: note ? `/pages/editor/index?id=${note.id}` : `/pages/editor/index${store.selectedDay ? `?day=${store.selectedDay}` : ''}` })
 }
@@ -500,7 +518,7 @@ function previewNoteImage(note: Note, index: number) {
         />
 
         <view v-else-if="showSkeleton" class="tl-skeleton" aria-label="加载中" aria-busy="true">
-          <view v-for="index in 4" :key="index" class="tl-skeleton__row">
+          <view v-for="index in 2" :key="index" class="tl-skeleton__row">
             <view class="tl-skeleton__dot" />
             <view class="tl-skeleton__card">
               <view class="tl-skeleton__line tl-skeleton__line--chip" />
@@ -545,7 +563,8 @@ function previewNoteImage(note: Note, index: number) {
                   <button
                     class="tl-card__open"
                     :aria-label="`编辑 ${formatTime(note.createdAt)} 的笔记：${noteText(note).slice(0, 80) || '图片笔记'}`"
-                    @tap="openEditor(note)"
+                    @longpress="promptDelete(note)"
+                    @tap="!longPressed && openEditor(note)"
                     @keydown.enter.prevent="openEditor(note)"
                     @keydown.space.prevent="openEditor(note)"
                   >
@@ -615,7 +634,7 @@ function previewNoteImage(note: Note, index: number) {
 </template>
 
 <style scoped lang="scss">
-.tl-hero__detail { display: flex; align-items: center; gap: 12px; }
+.tl-hero__detail { display: flex; align-items: center; gap: 12px; min-height: 44px; }
 .tl-hero__detail .tl-hero__meta--paired { margin-top: 0; }
 .tl-ai-link { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 4px; margin: 0; border: 0; background: transparent; color: var(--note-accent); font-size: var(--note-font-footnote); }
 .tl-ai-link::after { border: 0; }
@@ -851,7 +870,7 @@ function previewNoteImage(note: Note, index: number) {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--note-text);
-  font-size: var(--note-font-large);
+  font-size: var(--note-font-title1);
   font-weight: 700;
   line-height: 1.15;
   letter-spacing: var(--note-track-large);
@@ -890,7 +909,7 @@ function previewNoteImage(note: Note, index: number) {
   justify-content: center;
   gap: 4rpx;
   width: 88rpx;
-  height: 116rpx;
+  height: 100rpx;
   min-width: 44px;
   margin: 0;
   padding: 0;
@@ -1047,16 +1066,16 @@ function previewNoteImage(note: Note, index: number) {
 
 .tl-day__list {
   position: relative;
-  padding: 24rpx var(--tl-gutter) 12rpx;
+  padding: 16rpx var(--tl-gutter) 12rpx;
 }
 
 .tl-entry {
   position: relative;
   display: grid;
   grid-template-columns: 96rpx minmax(0, 1fr);
-  column-gap: 24rpx;
+  column-gap: 16rpx;
   align-items: start;
-  padding-bottom: 36rpx;
+  padding-bottom: 16rpx;
   min-height: 92rpx;
 }
 .tl-entry__rail {
@@ -1064,7 +1083,7 @@ function previewNoteImage(note: Note, index: number) {
   align-self: stretch;
 }
 .tl-entry__rail::after {
-  content: ''; position: absolute; top: 72rpx; bottom: -20rpx;
+  content: ''; position: absolute; top: 64rpx; bottom: -8rpx;
   left: 50%; width: 3rpx; transform: translateX(-50%); background: var(--note-accent);
 }
 .tl-entry:last-child .tl-entry__rail::after {
@@ -1083,7 +1102,7 @@ function previewNoteImage(note: Note, index: number) {
   min-height: 44px;
   width: 100%;
   margin: 0;
-  padding: 6px 0;
+  padding: 4px 0;
   border: 0;
   border-radius: var(--note-radius-sm);
   background: transparent;
@@ -1102,8 +1121,12 @@ function previewNoteImage(note: Note, index: number) {
 .tl-card__rich {
   color: var(--note-text);
   font-size: var(--note-font-body);
-  line-height: 1.55;
+  line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.tl-card__rich :deep(p:last-child) {
+  margin-bottom: 0 !important;
 }
 
 .tl-card__blank {
